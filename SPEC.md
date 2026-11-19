@@ -175,6 +175,7 @@ Orientiert sich am ersten Screenshot.
 - **Analyse:**
   - Mono-Mix, FFT 1024 bei 512 Hop.
   - Spectral Flux im Bassband (~40–150 Hz) mit adaptiver Schwelle (gleitender Median der letzten ~1 s × Faktor) und Mindestabstand zwischen Beats (~250 ms).
+  - *Umsetzung (Phase 5):* Flux = positiver Log-Anstieg der Bassband-Energie (über 2 Hops gemittelt) gegenüber max(Mittel der letzten 3 Hops, Median der letzten ~1 s). Schwelle = Median + Faktor × MAD des Flux über ~1 s, mindestens ein Energieanstieg von ~3× bei 60 % Beat-Reaktion. Grund: Mit nur ~3 FFT-Bins im Bassband löste „Median × Faktor“ bei Rauschen zu viele Beats aus (Tests mit synthetischem Signal).
   - Zusätzlich eine geglättete RMS-Energie.
 - **Ausgabe an den Render-Thread:** Beat-Puls und Energie (0..1), lock-frei über Atomics oder einen Ring-Buffer.
 - **Einstellung „Beat-Reaktion“:** skaliert Schwellenfaktor und Puls-Amplitude. Bei 0 % ist der Rahmen ohne Beat.

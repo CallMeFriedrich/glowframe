@@ -13,6 +13,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorIcon, WindowId};
 
+use crate::audio::AudioAnalyzer;
 use crate::cli::CliArgs;
 use crate::color::{Oklab, linear_to_srgb};
 use crate::cover::{CoverResult, CoverWorker, Image, hd};
@@ -139,6 +140,8 @@ pub struct App {
     proxy: EventLoopProxy<UserEvent>,
     media_service: Option<MediaService>,
     demo: Option<Demo>,
+    /// Beat analysis; only exists while the mode is active.
+    audio: Option<AudioAnalyzer>,
     media: MediaSnapshot,
     cover_worker: Option<CoverWorker>,
     net: Option<NetWorker>,
@@ -184,6 +187,7 @@ impl App {
             proxy,
             media_service: None,
             demo: None,
+            audio: None,
             media: MediaSnapshot::default(),
             cover_worker: None,
             net: None,
@@ -297,6 +301,11 @@ impl App {
         };
         self.ui.standby.set(standby);
         self.track_changed_at = now - Duration::from_secs(1);
+        if self.demo.is_none() {
+            self.audio = Some(AudioAnalyzer::start(
+                self.settings.frame.beat as f32 / 100.0,
+            ));
+        }
         fullscreen::keep_awake(true);
         self.build_windows(event_loop);
         if let Some(t) = self.tray.as_mut() {
@@ -310,6 +319,7 @@ impl App {
         }
         tracing::info!("mode: idle");
         self.mode = Mode::Idle;
+        self.audio = None;
         self.windows.clear();
         self.gpu = None;
         self.monitors = None;
@@ -810,9 +820,10 @@ impl App {
     fn render(&mut self, id: WindowId) {
         let now = Instant::now();
         let state = self.frame_state();
-        let (since_beat, energy) = match &self.demo {
-            Some(d) => (d.since_beat(now), d.energy(now)),
-            None => (None, 0.5), // audio analysis follows in phase 5
+        let (since_beat, energy) = match (&self.demo, &self.audio) {
+            (Some(d), _) => (d.since_beat(now), d.energy(now)),
+            (None, Some(a)) => (a.since_beat(now), a.energy()),
+            (None, None) => (None, 0.5),
         };
         let hint_alpha = self.hint_alpha(now);
         if hint_alpha == 0.0
