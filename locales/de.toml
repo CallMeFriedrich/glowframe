@@ -1,0 +1,14 @@
+[tray]
+start = "Starten"
+stop = "Stoppen"
+settings = "Einstellungen"
+quit = "Beenden"
+
+[fullscreen]
+esc_again = "Nochmal Esc zum Beenden"
+waiting = "Warte auf Spotify …"
+esc_esc = "Esc Esc zum Beenden"
+
+[notify]
+hotkey_failed_title = "Hotkey nicht verfügbar"
+hotkey_failed = "{hotkey} ist bereits belegt. Bitte in den Einstellungen eine andere Kombination wählen."

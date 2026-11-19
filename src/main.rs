@@ -2,10 +2,17 @@
 
 mod app;
 mod cli;
+mod fullscreen;
+mod hotkey;
+mod i18n;
 mod logging;
 mod settings;
 mod single_instance;
+mod tray;
 
+use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
+use tray_icon::menu::MenuEvent;
+use tray_icon::{MouseButton, TrayIconEvent};
 use winit::event_loop::EventLoop;
 
 use crate::app::{App, UserEvent};
@@ -44,7 +51,10 @@ fn main() {
         None => None,
     };
 
-    if let Err(e) = run(args, guard.as_ref()) {
+    let (settings, outcome) = settings::store::load(&paths.settings_file());
+    tracing::info!(?outcome, "settings loaded");
+
+    if let Err(e) = run(args, paths, settings, guard.as_ref()) {
         tracing::error!(error = %e, "event loop failed");
     }
     tracing::info!("Glowframe stopped");
@@ -52,6 +62,8 @@ fn main() {
 
 fn run(
     args: CliArgs,
+    paths: Paths,
+    settings: settings::Settings,
     guard: Option<&single_instance::PrimaryGuard>,
 ) -> Result<(), winit::error::EventLoopError> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
@@ -62,6 +74,27 @@ fn run(
             let _ = proxy.send_event(UserEvent::ShowSettings);
         });
     }
+
+    let proxy = event_loop.create_proxy();
+    TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
+        if let TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        } = e
+        {
+            let _ = proxy.send_event(UserEvent::TrayDoubleClick);
+        }
+    }));
+    let proxy = event_loop.create_proxy();
+    MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
+        let _ = proxy.send_event(UserEvent::Menu(e.id));
+    }));
+    let proxy = event_loop.create_proxy();
+    GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
+        if e.state == HotKeyState::Pressed {
+            let _ = proxy.send_event(UserEvent::Hotkey(e.id));
+        }
+    }));
 
     if let Some(after) = args.exit_after {
         let proxy = event_loop.create_proxy();
@@ -76,6 +109,6 @@ fn run(
         }
     }
 
-    let mut app = App::new(args);
+    let mut app = App::new(args, paths, settings);
     event_loop.run_app(&mut app)
 }

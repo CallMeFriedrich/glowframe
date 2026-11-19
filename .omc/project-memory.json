@@ -1,0 +1,141 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1795118559411,
+  "projectRoot": "D:\\Claude Code\\Standby Songanimation",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Rust",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "Cargo.toml"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "cargo",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "cargo build",
+    "testCommand": "cargo test",
+    "lintCommand": "cargo clippy",
+    "devCommand": "cargo run",
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "src"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 5,
+      "lastAccessed": 1795118559316,
+      "keyFiles": [
+        "app.rs",
+        "cli.rs",
+        "logging.rs",
+        "main.rs",
+        "single_instance.rs"
+      ]
+    },
+    "target": {
+      "path": "target",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1795118559317,
+      "keyFiles": [
+        "CACHEDIR.TAG"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/settings/model.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118703059,
+      "type": "file"
+    },
+    {
+      "path": "src/settings/store.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118716668,
+      "type": "file"
+    },
+    {
+      "path": "src/settings/mod.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118717565,
+      "type": "file"
+    },
+    {
+      "path": "locales/de.toml",
+      "accessCount": 1,
+      "lastAccessed": 1795118720968,
+      "type": "file"
+    },
+    {
+      "path": "locales/en.toml",
+      "accessCount": 1,
+      "lastAccessed": 1795118722729,
+      "type": "file"
+    },
+    {
+      "path": "src/i18n.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118732748,
+      "type": "file"
+    },
+    {
+      "path": "src/tray.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118751169,
+      "type": "file"
+    },
+    {
+      "path": "src/hotkey.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118755795,
+      "type": "file"
+    },
+    {
+      "path": "src/fullscreen.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118774479,
+      "type": "file"
+    },
+    {
+      "path": "src/app.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118799902,
+      "type": "file"
+    },
+    {
+      "path": "src/main.rs",
+      "accessCount": 1,
+      "lastAccessed": 1795118809724,
+      "type": "file"
+    },
+    {
+      "path": "Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1795118811396,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
