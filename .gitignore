@@ -1,0 +1,10 @@
+/target/
+/dist/
+/logs/
+/cache/
+*.log
+settings.json
+portable.txt
+
+# reference screenshots contain third-party album art (not for the repo)
+Screenshot*.png
