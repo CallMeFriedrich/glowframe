@@ -6,6 +6,7 @@ mod fullscreen;
 mod hotkey;
 mod i18n;
 mod logging;
+mod media;
 mod settings;
 mod single_instance;
 mod tray;
@@ -109,6 +110,6 @@ fn run(
         }
     }
 
-    let mut app = App::new(args, paths, settings);
+    let mut app = App::new(args, paths, settings, event_loop.create_proxy());
     event_loop.run_app(&mut app)
 }

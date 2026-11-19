@@ -1,11 +1,11 @@
 //! Application state machine: Idle (tray only) <-> Active (fullscreen).
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use tray_icon::menu::MenuId;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, StartCause, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::WindowId;
 
@@ -13,6 +13,7 @@ use crate::cli::CliArgs;
 use crate::fullscreen::{self, MonitorSignature, MonitorWindow};
 use crate::hotkey::Hotkey;
 use crate::i18n::{self, I18n};
+use crate::media::{MediaService, MediaSnapshot};
 use crate::settings::Settings;
 use crate::settings::paths::Paths;
 use crate::tray::{MenuAction, Tray};
@@ -21,6 +22,11 @@ use crate::tray::{MenuAction, Tray};
 const DOUBLE_ESC: Duration = Duration::from_millis(600);
 /// How often the monitor layout is checked while active.
 const MONITOR_POLL: Duration = Duration::from_secs(2);
+
+fn fmt_time(d: Duration) -> String {
+    let s = d.as_secs();
+    format!("{}:{:02}.{}", s / 60, s % 60, d.subsec_millis() / 100)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -38,10 +44,14 @@ pub enum UserEvent {
     TrayDoubleClick,
     Menu(MenuId),
     Hotkey(u32),
+    Media(Box<MediaSnapshot>),
 }
 
 pub struct App {
     args: CliArgs,
+    proxy: EventLoopProxy<UserEvent>,
+    media_service: Option<MediaService>,
+    media: MediaSnapshot,
     #[allow(dead_code)] // settings persistence from the settings window (phase 7)
     paths: Paths,
     settings: Settings,
@@ -59,10 +69,18 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(args: CliArgs, paths: Paths, settings: Settings) -> Self {
+    pub fn new(
+        args: CliArgs,
+        paths: Paths,
+        settings: Settings,
+        proxy: EventLoopProxy<UserEvent>,
+    ) -> Self {
         let i18n = I18n::new(i18n::resolve_language(settings.language));
         Self {
             args,
+            proxy,
+            media_service: None,
+            media: MediaSnapshot::default(),
             paths,
             settings,
             i18n,
@@ -88,6 +106,10 @@ impl App {
             Err(e) => tracing::error!(error = %e, "hotkey manager unavailable"),
         }
         self.register_hotkey();
+        let proxy = self.proxy.clone();
+        self.media_service = Some(MediaService::start(move |snapshot| {
+            let _ = proxy.send_event(UserEvent::Media(Box::new(snapshot)));
+        }));
         if self.args.start {
             self.activate(event_loop);
         }
@@ -162,6 +184,7 @@ impl App {
             self.build_windows(event_loop);
         }
         self.next_monitor_check = Instant::now() + MONITOR_POLL;
+        self.log_position();
     }
 
     fn on_escape(&mut self) {
@@ -185,8 +208,56 @@ impl App {
 
     fn quit(&mut self, event_loop: &ActiveEventLoop) {
         self.deactivate();
+        self.media_service = None;
         tracing::info!("quit");
         event_loop.exit();
+    }
+
+    fn on_media(&mut self, snapshot: MediaSnapshot) {
+        if snapshot == self.media {
+            return;
+        }
+        let title = snapshot.session.as_ref().map(|s| s.display_title());
+        if title != self.media.session.as_ref().map(|s| s.display_title())
+            && let Some(tray) = &self.tray
+        {
+            tray.set_now_playing(title);
+        }
+        self.media = snapshot;
+        self.log_position();
+    }
+
+    /// Debug output of the interpolated position (phase 2 verification).
+    fn log_position(&self) {
+        match &self.media.session {
+            Some(s) => tracing::debug!(
+                title = %s.display_title(),
+                artist = %s.artist,
+                playback = ?s.playback,
+                position = %fmt_time(s.clock.position(SystemTime::now())),
+                duration = %s.clock.duration().map(fmt_time).unwrap_or_default(),
+                "now playing"
+            ),
+            None => tracing::debug!("no Spotify session"),
+        }
+    }
+
+    /// Development keys in debug builds: Space play/pause, Left/Right
+    /// previous/next, S shuffle, R repeat. The final UI follows in phase 4.
+    #[cfg(debug_assertions)]
+    fn dev_key(&self, key: &Key) {
+        use crate::media::Command;
+        let cmd = match key {
+            Key::Named(NamedKey::Space) => Command::PlayPause,
+            Key::Named(NamedKey::ArrowRight) => Command::Next,
+            Key::Named(NamedKey::ArrowLeft) => Command::Previous,
+            Key::Character(c) if c.eq_ignore_ascii_case("s") => Command::ToggleShuffle,
+            Key::Character(c) if c.eq_ignore_ascii_case("r") => Command::CycleRepeat,
+            _ => return,
+        };
+        if let Some(m) = &self.media_service {
+            m.command(cmd);
+        }
     }
 
     fn window(&self, id: WindowId) -> Option<&MonitorWindow> {
@@ -220,6 +291,7 @@ impl ApplicationHandler<UserEvent> for App {
                 Some(MenuAction::Quit) => self.quit(event_loop),
                 None => {}
             },
+            UserEvent::Media(snapshot) => self.on_media(*snapshot),
         }
     }
 
@@ -236,6 +308,12 @@ impl ApplicationHandler<UserEvent> for App {
                     && event.logical_key == Key::Named(NamedKey::Escape) =>
             {
                 self.on_escape();
+            }
+            #[cfg(debug_assertions)]
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed && !event.repeat =>
+            {
+                self.dev_key(&event.logical_key);
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,

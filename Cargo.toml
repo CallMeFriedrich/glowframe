@@ -15,6 +15,12 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "env-filter", "ansi"] }
 tray-icon = "0.26.1"
 windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Media",
+    "Media_Control",
+    "Storage_Streams",
+    "Win32_System_WinRT",
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Gdi",
