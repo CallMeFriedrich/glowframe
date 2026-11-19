@@ -1,15 +1,20 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod cli;
+mod color;
+mod cover;
+mod demo;
 mod fullscreen;
 mod hotkey;
 mod i18n;
 mod logging;
 mod media;
+mod render;
 mod settings;
 mod single_instance;
 mod tray;
+mod ui;
 
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use tray_icon::menu::MenuEvent;

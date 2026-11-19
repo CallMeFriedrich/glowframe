@@ -19,9 +19,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
+use crate::render::Surface;
 use crate::settings::{MonitorMode, Settings};
 
 pub struct MonitorWindow {
+    /// Declared before `window` so the swap chain is released first.
+    pub surface: Option<Surface>,
     pub window: Window,
     pub mode: MonitorMode,
 }
@@ -79,7 +82,11 @@ pub fn create_windows(event_loop: &ActiveEventLoop, settings: &Settings) -> Vec<
                 }
                 tracing::info!(monitor = %name, ?mode, primary = is_primary, size = ?monitor.size(), "window created");
                 window.request_redraw();
-                out.push(MonitorWindow { window, mode });
+                out.push(MonitorWindow {
+                    surface: None,
+                    window,
+                    mode,
+                });
             }
             Err(e) => tracing::error!(error = %e, monitor = %name, "window creation failed"),
         }
