@@ -1,10 +1,11 @@
-//! D3D11 + D2D rendering for animation monitors (SPEC §3, §5.5).
+//! D3D11 + D2D rendering for animation monitors (SPEC §3, §5).
 
 pub mod gpu;
 pub mod surface;
+pub mod ui;
 
 pub use gpu::Gpu;
-pub use surface::{FrameResult, Overlay, Surface};
+pub use surface::{FrameResult, Surface};
 
 /// Constant buffer of `glow.hlsl`. Layout must match the HLSL cbuffer
 /// (16-byte rows).

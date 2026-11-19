@@ -1,3 +1,5 @@
-//! Fullscreen UI logic. Phase 3: glow frame animation; views follow in phase 4.
+//! Fullscreen UI logic: frame animation, layout, transitions.
 
+pub mod anim;
 pub mod frame;
+pub mod layout;

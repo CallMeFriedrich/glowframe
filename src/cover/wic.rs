@@ -11,6 +11,8 @@ use windows::core::{Interface, Result};
 /// Premultiplied 8-bit BGRA image.
 #[derive(Clone)]
 pub struct Image {
+    /// Unique per decoded image; used as GPU bitmap cache key.
+    pub id: u64,
     pub width: u32,
     pub height: u32,
     pub bgra: Vec<u8>,
@@ -72,7 +74,9 @@ impl Wic {
             let stride = w * 4;
             let mut bgra = vec![0u8; (stride * h) as usize];
             source.CopyPixels(std::ptr::null(), stride, &mut bgra)?;
+            static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
             Ok(Image {
+                id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 width: w,
                 height: h,
                 bgra,

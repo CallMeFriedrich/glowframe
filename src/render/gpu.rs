@@ -18,12 +18,10 @@ use windows::Win32::Graphics::Direct3D11::{
     ID3D11DeviceContext, ID3D11PixelShader, ID3D11VertexShader,
 };
 use windows::Win32::Graphics::DirectWrite::{
-    DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER,
-    DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat,
+    DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory,
 };
 use windows::Win32::Graphics::Dxgi::{IDXGIAdapter, IDXGIDevice, IDXGIFactory2};
-use windows::core::{Interface, PCSTR, Result, s, w};
+use windows::core::{Interface, PCSTR, Result, s};
 
 use super::GlowParams;
 
@@ -34,7 +32,7 @@ pub struct Gpu {
     pub context: ID3D11DeviceContext,
     pub dxgi_factory: IDXGIFactory2,
     pub d2d_device: ID2D1Device,
-    pub hint_format: IDWriteTextFormat,
+    pub dwrite: IDWriteFactory,
     pub vs: ID3D11VertexShader,
     pub ps: ID3D11PixelShader,
     pub params: ID3D11Buffer,
@@ -68,17 +66,6 @@ impl Gpu {
             let d2d_device = d2d_factory.CreateDevice(&dxgi_device)?;
 
             let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let hint_format = dwrite.CreateTextFormat(
-                w!("Segoe UI"),
-                None,
-                DWRITE_FONT_WEIGHT_NORMAL,
-                DWRITE_FONT_STYLE_NORMAL,
-                DWRITE_FONT_STRETCH_NORMAL,
-                15.0,
-                w!(""),
-            )?;
-            hint_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
-            hint_format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
 
             let vs_code = compile(s!("vs_main"), s!("vs_4_0"))?;
             let ps_code = compile(s!("ps_main"), s!("ps_4_0"))?;
@@ -101,7 +88,7 @@ impl Gpu {
                 context,
                 dxgi_factory,
                 d2d_device,
-                hint_format,
+                dwrite,
                 vs: vs.ok_or_else(windows::core::Error::empty)?,
                 ps: ps.ok_or_else(windows::core::Error::empty)?,
                 params: params.ok_or_else(windows::core::Error::empty)?,

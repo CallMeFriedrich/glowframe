@@ -1,20 +1,16 @@
-﻿//! Per-window swap chain with a D3D11 render target and a D2D target on the
+//! Per-window swap chain with a D3D11 render target and a D2D target on the
 //! same DXGI surface.
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
-};
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
-    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ROUNDED_RECT, ID2D1Bitmap1,
-    ID2D1DeviceContext,
+    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, ID2D1Bitmap1, ID2D1DeviceContext,
 };
 use windows::Win32::Graphics::Direct3D::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_VIEWPORT, ID3D11RenderTargetView, ID3D11Texture2D,
 };
-use windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL;
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC,
 };
@@ -27,12 +23,8 @@ use windows::core::Result;
 
 use super::GlowParams;
 use super::gpu::Gpu;
-
-/// Text overlay drawn on top of the frame.
-pub struct Overlay<'a> {
-    /// Esc hint text and its opacity.
-    pub hint: Option<(&'a str, f32)>,
-}
+use super::ui::{self, UiModel, UiResources};
+use crate::ui::layout::PlayerLayout;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum FrameResult {
@@ -46,6 +38,7 @@ pub struct Surface {
     d2d: ID2D1DeviceContext,
     rtv: Option<ID3D11RenderTargetView>,
     target: Option<ID2D1Bitmap1>,
+    ui: UiResources,
     width: u32,
     height: u32,
     scale: f32,
@@ -53,9 +46,10 @@ pub struct Surface {
 
 impl Surface {
     pub fn new(gpu: &Gpu, hwnd: HWND, width: u32, height: u32, scale: f32) -> Result<Self> {
+        let (width, height) = (width.max(1), height.max(1));
         let desc = DXGI_SWAP_CHAIN_DESC1 {
-            Width: width.max(1),
-            Height: height.max(1),
+            Width: width,
+            Height: height,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
@@ -81,13 +75,21 @@ impl Surface {
                 .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?;
             (sc, d2d)
         };
+        let ui = UiResources::new(
+            &gpu.dwrite,
+            &d2d,
+            width as f32 / scale,
+            height as f32 / scale,
+            scale,
+        )?;
         let mut s = Self {
             swapchain,
             d2d,
             rtv: None,
             target: None,
-            width: width.max(1),
-            height: height.max(1),
+            ui,
+            width,
+            height,
             scale,
         };
         s.create_targets(gpu)?;
@@ -149,6 +151,13 @@ impl Surface {
         self.width = width;
         self.height = height;
         self.scale = scale;
+        self.ui = UiResources::new(
+            &gpu.dwrite,
+            &self.d2d,
+            width as f32 / scale,
+            height as f32 / scale,
+            scale,
+        )?;
         self.create_targets(gpu)
     }
 
@@ -156,8 +165,13 @@ impl Surface {
         (self.width, self.height)
     }
 
-    /// Draws the glow frame and the overlay, then presents with VSync.
-    pub fn render(&self, gpu: &Gpu, params: &GlowParams, overlay: &Overlay) -> FrameResult {
+    /// Player layout in DIPs (for hit testing).
+    pub fn layout(&self) -> &PlayerLayout {
+        self.ui.layout()
+    }
+
+    /// Draws the glow frame and the UI, then presents with VSync.
+    pub fn render(&self, gpu: &Gpu, params: &GlowParams, model: &UiModel) -> FrameResult {
         let ctx = &gpu.context;
         // SAFETY: COM calls on valid objects; `params` is a repr(C) struct
         // matching the HLSL cbuffer layout.
@@ -186,14 +200,10 @@ impl Surface {
             ctx.PSSetConstantBuffers(0, Some(&[Some(gpu.params.clone())]));
             ctx.Draw(3, 0);
 
-            if let Some((text, alpha)) = overlay.hint
-                && alpha > 0.0
-            {
-                self.d2d.BeginDraw();
-                self.draw_hint(gpu, text, alpha);
-                if let Err(e) = self.d2d.EndDraw(None, None) {
-                    tracing::warn!(error = %e, "D2D EndDraw failed");
-                }
+            self.d2d.BeginDraw();
+            ui::draw(&self.d2d, &self.ui, model);
+            if let Err(e) = self.d2d.EndDraw(None, None) {
+                tracing::warn!(error = %e, "D2D EndDraw failed");
             }
 
             let hr = self.swapchain.Present(1, DXGI_PRESENT(0));
@@ -203,56 +213,5 @@ impl Surface {
             }
         }
         FrameResult::Ok
-    }
-
-    /// Bottom-center pill with the "press Esc again" hint (SPEC Â§4).
-    unsafe fn draw_hint(&self, gpu: &Gpu, text: &str, alpha: f32) {
-        let w = self.width as f32 / self.scale;
-        let h = self.height as f32 / self.scale;
-        let wide: Vec<u16> = text.encode_utf16().collect();
-        let pill_w = 24.0 + 8.2 * text.chars().count() as f32;
-        let pill_h = 38.0;
-        let rect = D2D_RECT_F {
-            left: (w - pill_w) * 0.5,
-            top: h - 96.0,
-            right: (w + pill_w) * 0.5,
-            bottom: h - 96.0 + pill_h,
-        };
-        // SAFETY: called between BeginDraw and EndDraw on this context.
-        unsafe {
-            let bg = D2D1_COLOR_F {
-                r: 0.08,
-                g: 0.08,
-                b: 0.1,
-                a: 0.72 * alpha,
-            };
-            let fg = D2D1_COLOR_F {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 0.82 * alpha,
-            };
-            if let (Ok(bg), Ok(fg)) = (
-                self.d2d.CreateSolidColorBrush(&bg, None),
-                self.d2d.CreateSolidColorBrush(&fg, None),
-            ) {
-                self.d2d.FillRoundedRectangle(
-                    &D2D1_ROUNDED_RECT {
-                        rect,
-                        radiusX: pill_h * 0.5,
-                        radiusY: pill_h * 0.5,
-                    },
-                    &bg,
-                );
-                self.d2d.DrawText(
-                    &wide,
-                    &gpu.hint_format,
-                    &rect,
-                    &fg,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-            }
-        }
     }
 }

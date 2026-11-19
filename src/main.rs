@@ -1,6 +1,7 @@
 ﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod cache;
 mod cli;
 mod color;
 mod cover;
@@ -10,6 +11,7 @@ mod hotkey;
 mod i18n;
 mod logging;
 mod media;
+mod net;
 mod render;
 mod settings;
 mod single_instance;
