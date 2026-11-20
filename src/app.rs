@@ -137,6 +137,8 @@ struct UiState {
     /// Idle view: cover view (0) <-> lyrics focus view (1).
     focus: Spring,
     idle_views: IdleScheduler,
+    /// Clock line on/off (setting, faded).
+    clock: Spring,
     /// Lyrics available for the focus view (held while loading).
     focus_lyrics: bool,
     last_activity: Instant,
@@ -161,6 +163,7 @@ impl UiState {
             // Slow, calm morph: this change happens without user input.
             focus: Spring::new(0.0, 0.95, 0.94),
             idle_views: IdleScheduler::from_clock(),
+            clock: Spring::smooth(1.0, 0.4),
             focus_lyrics: false,
             last_activity: now,
             last_cursor: None,
@@ -215,6 +218,7 @@ struct UiFrame {
     split: f32,
     cover_lyrics: f32,
     focus: f32,
+    clock: f32,
     scroll: f32,
     line_state: Option<LineState>,
     line_change: f32,
@@ -397,6 +401,9 @@ impl App {
         self.animator = FrameAnimator::new(now);
         self.animator.jump_palette(&self.target_palette());
         self.ui = UiState::new(now);
+        self.ui
+            .clock
+            .set(f32::from(u8::from(self.settings.show_clock)));
         if self.args.demo {
             self.ui.idle_views =
                 IdleScheduler::from_clock().with_interval(crate::ui::idle::DEMO_INTERVAL);
@@ -1156,6 +1163,10 @@ impl App {
         let variant = self.ui.idle_views.update(now, cover_view);
         let focus_target = variant == IdleVariant::Focus && self.ui.focus_lyrics;
         let focus = self.ui.focus.update(now, f32::from(u8::from(focus_target)));
+        let clock = self
+            .ui
+            .clock
+            .update(now, f32::from(u8::from(self.settings.show_clock)));
 
         UiFrame {
             view,
@@ -1167,6 +1178,7 @@ impl App {
             split,
             cover_lyrics,
             focus,
+            clock,
             scroll,
             line_state: line_state.map(|(_, st)| st),
             line_change,
@@ -1313,6 +1325,7 @@ impl App {
             cover_lyrics_mix: frame.cover_lyrics,
             view: frame.view,
             focus: frame.focus,
+            clock: frame.clock,
             clock_time: self.clock.as_ref().map_or("", |c| c.2.as_str()),
             clock_date: self.clock.as_ref().map_or("", |c| c.3.as_str()),
             standby: frame.standby,

@@ -96,7 +96,7 @@ Es gibt drei Ansichten:
 - **Ruhe-Ansicht:** erscheint, wenn die Maus *N* Sekunden ruht (Einstellung, Standard 5 s). Sie ist entweder die **Cover-Ansicht** (§5.4) oder die **Lyrics-Fokus-Ansicht** (§5.4a, v1.2).
   - Sind Lyrics verfügbar, wechseln sich Cover-Ansicht und Lyrics-Fokus-Ansicht in zufälligen Abständen von 5 min ± 2 min ab (weiche Überblendung per Feder). Ohne Lyrics bleibt es bei der Cover-Ansicht.
 
-**Uhr (v1.2):** In allen Ansichten steht oben mittig eine Zeile im Stil des iOS-Sperrbildschirms: Uhrzeit fett, daneben das Datum normal und leicht gedimmt (DE: „16:46  Fr. 20. Nov.“, EN: „4:46  Fri, Nov 20“). Sie folgt der Sprache der Einstellungen.
+**Uhr (v1.2):** In allen Ansichten steht oben mittig eine Zeile im Stil des iOS-Sperrbildschirms: Uhrzeit fett, daneben das Datum normal und leicht gedimmt (DE: „16:46  Fr. 20. Nov.“, EN: „4:46  Fri, Nov 20“). Sie folgt der Sprache der Einstellungen und lässt sich in den Einstellungen ausschalten (§7); das Umschalten blendet weich ein bzw. aus.
 
 Der Übergang ist ein weicher Crossfade mit leichtem Scale, etwa 400 ms, mit Easing.
 
@@ -230,6 +230,7 @@ Orientiert sich am ersten Screenshot.
 | Allgemein | Hotkey | Kombination aufnehmen | `Strg+Alt+L` |
 | Monitore | Modus je Monitor | Animation / Schwarz / Frei (Liste mit Monitorname und Auflösung, Primär markiert) | Primär = Animation, Rest = Schwarz |
 | Ansicht | Zeit bis Cover-Ansicht | 2–60 s | 5 s |
+| Ansicht | Datum und Uhrzeit anzeigen (v1.2) | an/aus | an |
 | Rahmen | Helligkeit | 0–100 % | 80 % |
 | Rahmen | Breite | 0–100 % (relativ zur Bildschirmhöhe) | 50 % |
 | Rahmen | Rotationsgeschwindigkeit | 0–100 % (0 = steht) | 40 % (≈ 1 Umlauf / 12 s) |

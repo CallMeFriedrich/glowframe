@@ -140,6 +140,7 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                     ui.add(egui::Slider::new(&mut s.cover_view_delay_s, 2..=60).suffix(" s"));
                     ui.end_row();
                 });
+                ui.checkbox(&mut s.show_clock, i18n.t("settings.show_clock"));
             });
 
             section(ui, i18n.t("settings.frame"), |ui| {

@@ -140,6 +140,8 @@ pub struct Settings {
     /// use the default: primary = Animation, others = Black.
     pub monitors: BTreeMap<String, MonitorMode>,
     pub cover_view_delay_s: u32,
+    /// Clock line with date and time at the top (v1.2).
+    pub show_clock: bool,
     pub frame: FrameSettings,
     pub lyrics: LyricsSettings,
     pub hd_cover: bool,
@@ -153,6 +155,7 @@ impl Default for Settings {
             hotkey: "Ctrl+Alt+L".into(),
             monitors: BTreeMap::new(),
             cover_view_delay_s: 5,
+            show_clock: true,
             frame: FrameSettings::default(),
             lyrics: LyricsSettings::default(),
             hd_cover: true,
@@ -222,5 +225,14 @@ mod tests {
         assert_eq!(s.lyrics.offset_ms, -2000);
         assert_eq!(s.hotkey, "Ctrl+Alt+L");
         assert_eq!(s.version, CURRENT_VERSION);
+    }
+
+    #[test]
+    fn clock_defaults_on_for_old_files() {
+        // Settings files from v1.1 have no `show_clock` field.
+        let s: Settings =
+            serde_json::from_str(r#"{"version":1,"cover_view_delay_s":7}"#).unwrap_or_default();
+        assert!(s.show_clock);
+        assert_eq!(s.cover_view_delay_s, 7);
     }
 }

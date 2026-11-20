@@ -119,6 +119,8 @@ pub struct UiModel<'a> {
     pub view: f32,
     /// Idle view: 0 = cover view, 1 = lyrics focus view (SPEC §5.4a).
     pub focus: f32,
+    /// Clock line visibility 0..1 (setting, faded).
+    pub clock: f32,
     /// Clock line (SPEC §5.2): bold time and dimmed date.
     pub clock_time: &'a str,
     pub clock_date: &'a str,
@@ -1129,7 +1131,7 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     p.set_transform(&scale_about(1.0, 0.0, 0.0));
 
     // ----- clock -----
-    draw_clock(&p, m, intro);
+    draw_clock(&p, m, intro * m.clock.clamp(0.0, 1.0));
 
     // ----- Esc hint -----
     if let Some((text, a)) = m.esc_hint

@@ -100,7 +100,7 @@ the fullscreen mode is running, and are saved automatically.
 |---|---|
 | General | Language (top right), hotkey (click **Change** and press a combination with Ctrl or Alt) |
 | Monitors | Per monitor: **Animation** (frame and player), **Black**, or **Free** (not covered). Default: primary monitor animation, others black |
-| View | Time until the cover view (2–60 s) |
+| View | Time until the cover view (2–60 s), show date and time on/off |
 | Frame | Brightness, width, rotation speed, beat reaction (0 % turns the beat off), color mode (cover colors or a fixed palette: Neon Pink, Ocean, Sunset, Mono, custom colors) |
 | Lyrics | On/off, in player view, in cover view, timing offset (−2000 to +2000 ms) |
 | Cover | Load HD covers |
