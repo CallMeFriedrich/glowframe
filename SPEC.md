@@ -90,10 +90,13 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - **Mauszeiger:** in der Cover-Ansicht ausgeblendet, bei Bewegung sofort wieder da.
 
 ### 5.2 Ansichten und Wechsel
-Es gibt zwei Ansichten:
+Es gibt drei Ansichten:
 
 - **Player-Ansicht:** erscheint bei Mausbewegung.
-- **Cover-Ansicht:** erscheint, wenn die Maus *N* Sekunden ruht (Einstellung, Standard 5 s).
+- **Ruhe-Ansicht:** erscheint, wenn die Maus *N* Sekunden ruht (Einstellung, Standard 5 s). Sie ist entweder die **Cover-Ansicht** (§5.4) oder die **Lyrics-Fokus-Ansicht** (§5.4a, v1.2).
+  - Sind Lyrics verfügbar, wechseln sich Cover-Ansicht und Lyrics-Fokus-Ansicht in zufälligen Abständen von 5 min ± 2 min ab (weiche Überblendung per Feder). Ohne Lyrics bleibt es bei der Cover-Ansicht.
+
+**Uhr (v1.2):** In allen Ansichten steht oben mittig eine Zeile im Stil des iOS-Sperrbildschirms: Uhrzeit fett, daneben das Datum normal und leicht gedimmt (DE: „16:46  Fr. 20. Nov.“, EN: „4:46  Fri, Nov 20“). Sie folgt der Sprache der Einstellungen.
 
 Der Übergang ist ein weicher Crossfade mit leichtem Scale, etwa 400 ms, mit Easing.
 
@@ -129,6 +132,12 @@ Orientiert sich am ersten Screenshot.
   - unten mittig die aktuelle Zeile, darunter gedimmt die nächste
   - über einem dezenten Verlauf nach Schwarz, damit es lesbar bleibt
   - Zeilenwechsel mit weichem Fade/Slide
+
+### 5.4a Lyrics-Fokus-Ansicht (v1.2)
+- Aufbau wie die Player-Ansicht mit Lyrics (§5.3), aber **ohne Steuerungsbuttons**.
+- **Links:** größeres Cover (füllt den frei gewordenen Platz), darunter Titel und Interpret.
+- **Rechts:** Lyrics im gleichen Stil wie in der Player-Ansicht.
+- Nur verfügbar, wenn synchronisierte Lyrics vorhanden und eingeschaltet sind.
 
 ### 5.5 Leuchtrahmen
 - **Form:** Er folgt dem rechteckigen Bildschirmrand mit leicht abgerundeten Ecken und leuchtet weich nach innen aus (Glow-Falloff, keine harte Linie).

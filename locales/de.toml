@@ -9,6 +9,12 @@ esc_again = "Nochmal Esc zum Beenden"
 waiting = "Warte auf Spotify …"
 esc_esc = "Esc Esc zum Beenden"
 
+[clock]
+weekdays = "So.,Mo.,Di.,Mi.,Do.,Fr.,Sa."
+months = "Jan.,Feb.,März,Apr.,Mai,Juni,Juli,Aug.,Sept.,Okt.,Nov.,Dez."
+date = "{weekday} {day}. {month}"
+hours = "24"
+
 [settings]
 title = "Einstellungen"
 autosave = "Änderungen gelten sofort und werden automatisch gespeichert."

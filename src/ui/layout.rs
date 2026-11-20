@@ -82,9 +82,50 @@ pub fn player_split(w: f32, h: f32) -> PlayerLayout {
     player_at(w * 0.21, w * 0.4, h)
 }
 
-/// Area of the lyrics in the split layout (right ~60 %).
+/// Area of the lyrics in the split layout (right ~60 %), below the clock.
 pub fn lyrics_area(w: f32, h: f32) -> Rect {
-    Rect::new(w * 0.44, h * 0.08, w * 0.5, h * 0.84)
+    Rect::new(w * 0.44, h * 0.13, w * 0.5, h * 0.8)
+}
+
+/// Lyrics focus view (SPEC §5.4a): larger cover plus title/artist in the
+/// left column, no buttons; lyrics use [`lyrics_area`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FocusLayout {
+    pub cover: Rect,
+    pub title: Rect,
+    pub artist: Rect,
+    pub title_size: f32,
+    pub artist_size: f32,
+}
+
+pub fn focus(w: f32, h: f32) -> FocusLayout {
+    let cx = w * 0.22;
+    let col_w = w * 0.4;
+    let cover = (0.46 * h).min(0.85 * col_w);
+    let title_size = (0.028 * h).clamp(16.0, 60.0);
+    let artist_size = title_size * 0.7;
+    let title_h = title_size * 1.25 * 2.0;
+    let artist_h = artist_size * 1.45;
+    let gap_cover = 0.034 * h;
+    let gap_text = 0.004 * h;
+    let total = cover + gap_cover + title_h + gap_text + artist_h;
+    // Optical center slightly below the middle, the clock sits on top.
+    let top = (h - total) / 2.0 + 0.02 * h;
+    let text_w = (cover * 1.15).min(col_w);
+    let title_y = top + cover + gap_cover;
+    let artist_y = title_y + title_h + gap_text;
+    FocusLayout {
+        cover: Rect::new(cx - cover / 2.0, top, cover, cover),
+        title: Rect::new(cx - text_w / 2.0, title_y, text_w, title_h),
+        artist: Rect::new(cx - text_w / 2.0, artist_y, text_w, artist_h),
+        title_size,
+        artist_size,
+    }
+}
+
+/// Clock line: vertical center and font size of the time (date is ~0.42×).
+pub fn clock(h: f32) -> (f32, f32) {
+    (h * 0.065, (0.034 * h).clamp(18.0, 72.0))
 }
 
 /// Player layout between centered (`t` = 0) and split (`t` = 1).
@@ -234,6 +275,22 @@ mod tests {
         // Corner of the bounding box is outside the circle.
         assert_eq!(l.hit(r.x + 1.0, r.y + 1.0), None);
         assert_eq!(l.hit(10.0, 10.0), None);
+    }
+
+    #[test]
+    fn focus_layout_fits_left_of_lyrics_and_below_clock() {
+        for (w, h) in [(1920.0, 1080.0), (2560.0, 1440.0), (1280.0, 1024.0)] {
+            let f = focus(w, h);
+            let area = lyrics_area(w, h);
+            let (clock_y, clock_size) = clock(h);
+            assert!(f.cover.x + f.cover.w < area.x, "{w}x{h}");
+            assert!(f.title.x + f.title.w < area.x, "{w}x{h}");
+            assert!(f.cover.y > clock_y + clock_size, "{w}x{h}");
+            assert!(f.artist.y + f.artist.h < h, "{w}x{h}");
+            assert!(area.y > clock_y + clock_size);
+            // Bigger than the player cover.
+            assert!(f.cover.w > player_split(w, h).cover.w);
+        }
     }
 
     #[test]

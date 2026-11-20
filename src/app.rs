@@ -28,13 +28,16 @@ use crate::net::{NetJob, NetResult, NetWorker};
 use crate::render::ui::{ButtonView, CoverLyricsView, LyricsView, TrackView, UiModel};
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
+use crate::settings::model::Language;
 use crate::settings::paths::Paths;
 use crate::settings::store;
 use crate::settings::{MonitorMode, Settings};
 use crate::settings_window::{MonitorInfo, PanelEvent, SettingsWindow};
 use crate::tray::{MenuAction, Tray};
 use crate::ui::anim::Spring;
+use crate::ui::clock::{self, ClockFormat, LocalTime};
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
+use crate::ui::idle::{IdleScheduler, IdleVariant};
 use crate::ui::layout::{self, Button};
 
 /// Second Esc must follow within this window (SPEC §4).
@@ -131,6 +134,11 @@ struct UiState {
     intro: Spring,
     /// Cover change on track change (restarts at 0).
     track: Spring,
+    /// Idle view: cover view (0) <-> lyrics focus view (1).
+    focus: Spring,
+    idle_views: IdleScheduler,
+    /// Lyrics available for the focus view (held while loading).
+    focus_lyrics: bool,
     last_activity: Instant,
     last_cursor: Option<PhysicalPosition<f64>>,
     /// Pointer position in DIPs on the window it is over.
@@ -150,6 +158,10 @@ impl UiState {
             press: [Spring::new(0.0, 0.28, 0.55); 5],
             intro: Spring::new(0.0, 0.8, 0.9),
             track: Spring::new(1.0, 0.6, 0.88),
+            // Slow, calm morph: this change happens without user input.
+            focus: Spring::new(0.0, 0.95, 0.94),
+            idle_views: IdleScheduler::from_clock(),
+            focus_lyrics: false,
             last_activity: now,
             last_cursor: None,
             pointer: None,
@@ -202,6 +214,7 @@ struct UiFrame {
     track_t: f32,
     split: f32,
     cover_lyrics: f32,
+    focus: f32,
     scroll: f32,
     line_state: Option<LineState>,
     line_change: f32,
@@ -247,6 +260,8 @@ pub struct App {
     ui: UiState,
     lyrics: LyricsTracker,
     lyrics_ui: LyricsUi,
+    /// Formatted clock line, rebuilt when the minute or language changes.
+    clock: Option<(LocalTime, Language, String, String)>,
     monitors: Option<MonitorSignature>,
     next_monitor_check: Instant,
     last_esc: Option<Instant>,
@@ -297,6 +312,7 @@ impl App {
             ui: UiState::new(now),
             lyrics: LyricsTracker::default(),
             lyrics_ui: LyricsUi::new(),
+            clock: None,
             monitors: None,
             next_monitor_check: now,
             last_esc: None,
@@ -381,6 +397,10 @@ impl App {
         self.animator = FrameAnimator::new(now);
         self.animator.jump_palette(&self.target_palette());
         self.ui = UiState::new(now);
+        if self.args.demo {
+            self.ui.idle_views =
+                IdleScheduler::from_clock().with_interval(crate::ui::idle::DEMO_INTERVAL);
+        }
         self.lyrics_ui = LyricsUi::new();
         let standby = if self.media.session.is_none() {
             1.0
@@ -1129,6 +1149,14 @@ impl App {
         }
         let line_change = self.lyrics_ui.line_change.update(now, 1.0);
 
+        // Idle alternation cover view <-> lyrics focus (SPEC §5.2, §5.4a).
+        // The schedule runs whenever the idle view is shown; the focus view
+        // only appears while lyrics are available.
+        self.ui.focus_lyrics = ls.enabled && self.lyrics.available_held(now, self.ui.focus_lyrics);
+        let variant = self.ui.idle_views.update(now, cover_view);
+        let focus_target = variant == IdleVariant::Focus && self.ui.focus_lyrics;
+        let focus = self.ui.focus.update(now, f32::from(u8::from(focus_target)));
+
         UiFrame {
             view,
             pause,
@@ -1138,6 +1166,7 @@ impl App {
             track_t,
             split,
             cover_lyrics,
+            focus,
             scroll,
             line_state: line_state.map(|(_, st)| st),
             line_change,
@@ -1180,6 +1209,27 @@ impl App {
         (Some(player), Some(cover))
     }
 
+    /// Refreshes the cached clock line (once per minute or language change).
+    fn update_clock(&mut self) {
+        let t = LocalTime::now();
+        let lang = self.i18n.language();
+        if self
+            .clock
+            .as_ref()
+            .is_some_and(|(ct, cl, _, _)| *ct == t && *cl == lang)
+        {
+            return;
+        }
+        let f = ClockFormat {
+            weekdays: self.i18n.t("clock.weekdays"),
+            months: self.i18n.t("clock.months"),
+            date: self.i18n.t("clock.date"),
+            hours: self.i18n.t("clock.hours"),
+        };
+        let (time, date) = clock::format(t, &f);
+        self.clock = Some((t, lang, time, date));
+    }
+
     fn track_view<'a>(&'a self, t: &'a TrackDisplay, alpha: f32, scale: f32) -> TrackView<'a> {
         let thumb = t.thumb_key.and_then(|k| self.thumbs.get(&k));
         let hd = t.album_key.and_then(|k| self.hd_images.get(&k));
@@ -1219,6 +1269,7 @@ impl App {
             self.hint_since = None;
         }
         let frame = self.ui_tick(now);
+        self.update_clock();
 
         let Some((size, size_dip)) = self
             .windows
@@ -1261,6 +1312,9 @@ impl App {
             cover_lyrics,
             cover_lyrics_mix: frame.cover_lyrics,
             view: frame.view,
+            focus: frame.focus,
+            clock_time: self.clock.as_ref().map_or("", |c| c.2.as_str()),
+            clock_date: self.clock.as_ref().map_or("", |c| c.3.as_str()),
             standby: frame.standby,
             pause: frame.pause,
             tracks,

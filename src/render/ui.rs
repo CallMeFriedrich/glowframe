@@ -22,11 +22,11 @@ use windows::Win32::Graphics::Direct2D::{
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT,
     DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-    DWRITE_PARAGRAPH_ALIGNMENT, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_FAR,
-    DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
-    DWRITE_TEXT_METRICS, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
-    DWRITE_WORD_WRAPPING_NO_WRAP, DWRITE_WORD_WRAPPING_WRAP, IDWriteFactory, IDWriteFontCollection,
-    IDWriteTextFormat, IDWriteTextLayout,
+    DWRITE_LINE_METRICS, DWRITE_PARAGRAPH_ALIGNMENT, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+    DWRITE_PARAGRAPH_ALIGNMENT_FAR, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER,
+    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_METRICS, DWRITE_TRIMMING,
+    DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP, DWRITE_WORD_WRAPPING_WRAP,
+    IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat, IDWriteTextLayout,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::core::{BOOL, HSTRING, Interface, Result};
@@ -117,6 +117,11 @@ pub struct UiModel<'a> {
     pub cover_lyrics_mix: f32,
     /// 0 = player view, 1 = cover view (spring, may overshoot slightly).
     pub view: f32,
+    /// Idle view: 0 = cover view, 1 = lyrics focus view (SPEC §5.4a).
+    pub focus: f32,
+    /// Clock line (SPEC §5.2): bold time and dimmed date.
+    pub clock_time: &'a str,
+    pub clock_date: &'a str,
     /// 0..1 blend towards the standby screen.
     pub standby: f32,
     /// 0..1 blend of the pause state.
@@ -155,6 +160,10 @@ pub struct UiResources {
     standby: IDWriteTextFormat,
     standby_small: IDWriteTextFormat,
     hint: IDWriteTextFormat,
+    clock_time: IDWriteTextFormat,
+    clock_date: IDWriteTextFormat,
+    focus_title: IDWriteTextFormat,
+    focus_artist: IDWriteTextFormat,
     brush: ID2D1SolidColorBrush,
     scale: ID2D1Effect,
     blur: ID2D1Effect,
@@ -177,6 +186,8 @@ impl UiResources {
         let layout = layout::player(w, h);
         let (sb_big, sb_small) = layout::standby_sizes(h);
         let (lyric_size, cover_size, cover_next_size) = layout::lyrics_sizes(h);
+        let (_, clock_size) = layout::clock(h);
+        let focus = layout::focus(w, h);
         let ui_font = pick_family(dwrite, &["Segoe UI Variable Display", "Segoe UI"]);
         let icon_font = pick_family(dwrite, &["Segoe Fluent Icons", "Segoe MDL2 Assets"]);
         let fmt = |family: &str, weight, size, para, wrap| {
@@ -197,6 +208,22 @@ impl UiResources {
                 true,
             )?;
             lyric.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
+            let clock_time = fmt(
+                &ui_font,
+                DWRITE_FONT_WEIGHT_BOLD,
+                clock_size,
+                DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
+                false,
+            )?;
+            clock_time.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
+            let clock_date = fmt(
+                &ui_font,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                clock_size * 0.6,
+                DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
+                false,
+            )?;
+            clock_date.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
             let white = color(1.0, 1.0, 1.0, 1.0);
             Ok(Self {
                 size: (w, h),
@@ -266,6 +293,22 @@ impl UiResources {
                     DWRITE_FONT_WEIGHT_NORMAL,
                     15.0,
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+                    false,
+                )?,
+                clock_time,
+                clock_date,
+                focus_title: fmt(
+                    &ui_font,
+                    DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                    focus.title_size,
+                    DWRITE_PARAGRAPH_ALIGNMENT_FAR,
+                    true,
+                )?,
+                focus_artist: fmt(
+                    &ui_font,
+                    DWRITE_FONT_WEIGHT_NORMAL,
+                    focus.artist_size,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
                     false,
                 )?,
                 brush: ctx.CreateSolidColorBrush(&white, None)?,
@@ -682,6 +725,44 @@ impl Painter<'_> {
         }
     }
 
+    /// Single-line layout with its ink width and baseline offset.
+    fn measured(
+        &self,
+        s: &str,
+        format: &IDWriteTextFormat,
+        box_h: f32,
+    ) -> Option<(IDWriteTextLayout, f32, f32)> {
+        if s.is_empty() {
+            return None;
+        }
+        let tl = self.res.text_layout(s, format, self.res.size.0, box_h)?;
+        let mut m = DWRITE_TEXT_METRICS::default();
+        let mut lines = [DWRITE_LINE_METRICS::default()];
+        let mut count = 0u32;
+        // SAFETY: out-pointers to locals; one line fits the slice (no wrapping).
+        unsafe {
+            tl.GetMetrics(&mut m).ok()?;
+            tl.GetLineMetrics(Some(&mut lines), &mut count).ok()?;
+        }
+        Some((tl, m.width, lines[0].baseline))
+    }
+
+    fn layout_at(&self, tl: &IDWriteTextLayout, x: f32, y: f32, c: D2D1_COLOR_F) {
+        if c.a <= 0.0 {
+            return;
+        }
+        self.fill_color(c);
+        // SAFETY: called between BeginDraw/EndDraw.
+        unsafe {
+            self.ctx.DrawTextLayout(
+                Vector2 { X: x, Y: y },
+                tl,
+                &self.res.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        }
+    }
+
     fn set_transform(&self, m: &Matrix3x2) {
         // SAFETY: plain state change on the device context.
         unsafe { self.ctx.SetTransform(m) };
@@ -846,21 +927,21 @@ fn draw_dots(p: &Painter, x: f32, cy: f32, size: f32, time: f32, alpha: f32) {
     }
 }
 
-/// Lyrics in the split player view (inside the player transform).
-fn draw_lyrics(p: &Painter, m: &UiModel, alpha: f32) {
+/// Scrolling lyrics on the right (split player view and lyrics focus view),
+/// drawn under `base` with the final opacity `a`.
+fn draw_lyrics(p: &Painter, m: &UiModel, base: &Matrix3x2, a: f32) {
     let Some(v) = &m.lyrics else { return };
-    let a = v.alpha * alpha;
     if a <= 0.0 {
         return;
     }
     let res = p.res;
     let (w, h) = res.size;
-    let base = player_transform(m, w, h);
+    p.set_transform(base);
     for_each_line(res, v, |tl, g| {
         if g.sharp {
-            draw_line(p.ctx, res, &base, tl, g, g.alpha * a);
+            draw_line(p.ctx, res, base, tl, g, g.alpha * a);
         } else {
-            draw_soft_line(p.ctx, res, &base, tl, g, g.alpha * a);
+            draw_soft_line(p.ctx, res, base, tl, g, g.alpha * a);
         }
     });
     if v.gap {
@@ -989,19 +1070,32 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
             );
         }
         draw_buttons(&p, m, player_a);
-        draw_lyrics(&p, m, player_a);
+        let la = m.lyrics.as_ref().map_or(0.0, |v| v.alpha);
+        draw_lyrics(&p, m, &player_transform(m, w, h), la * player_a);
     }
 
-    // ----- cover view -----
-    let cover_a = view * content;
-    if cover_a > 0.0 {
-        p.set_transform(&cover_transform(m, w, h));
-        let r = layout::cover_view(w, h, m.cover_lyrics_mix.clamp(0.0, 1.0));
+    // ----- idle views: cover view <-> lyrics focus view -----
+    // The cover morphs between both places (shared element), the rest
+    // crossfades: bottom lyric lines out, title/artist and lyrics in.
+    let idle_a = view * content;
+    if idle_a > 0.0 {
+        let base = cover_transform(m, w, h);
+        p.set_transform(&base);
+        let f = m.focus;
+        let fa = f.clamp(0.0, 1.0);
+        let fl = layout::focus(w, h);
+        let r = lerp_rect(
+            layout::cover_view(w, h, m.cover_lyrics_mix.clamp(0.0, 1.0)),
+            fl.cover,
+            f,
+        );
+        let grow = 1.35 - 0.1 * fa;
+        let rise = (1.0 - fa) * h * 0.015;
         for t in &m.tracks {
-            let a = cover_a * t.alpha;
+            let a = idle_a * t.alpha;
             let cr = r.scaled(t.scale);
             if let Some(s) = t.small {
-                p.ambient(s, cr, 1.35, 0.6 * a);
+                p.ambient(s, cr, grow, 0.6 * a);
             }
             p.cover(t.image.map(|i| i.as_ref()), cr, a);
             p.rounded(
@@ -1009,10 +1103,33 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
                 cr.w * 0.035,
                 color(0.02, 0.02, 0.03, 0.42 * m.pause * a),
             );
+            let ta = a * fa;
+            if ta > 0.0 {
+                let up = |x: Rect| Rect { y: x.y + rise, ..x };
+                p.text(
+                    t.title,
+                    &res.focus_title,
+                    up(fl.title),
+                    color(1.0, 1.0, 1.0, 0.95 * ta),
+                );
+                p.text(
+                    t.artist,
+                    &res.focus_artist,
+                    up(fl.artist),
+                    color(1.0, 1.0, 1.0, 0.55 * ta),
+                );
+            }
         }
-        draw_cover_lyrics(&p, m, cover_a);
+        draw_cover_lyrics(&p, m, idle_a * (1.0 - fa));
+        if fa > 0.0 {
+            let slide = translate((1.0 - fa) * w * 0.03, 0.0);
+            draw_lyrics(&p, m, &mat_mul(&slide, &base), idle_a * fa);
+        }
     }
     p.set_transform(&scale_about(1.0, 0.0, 0.0));
+
+    // ----- clock -----
+    draw_clock(&p, m, intro);
 
     // ----- Esc hint -----
     if let Some((text, a)) = m.esc_hint
@@ -1022,6 +1139,56 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
         let r = Rect::new((w - pill_w) / 2.0, h - 96.0, pill_w, 38.0);
         p.rounded(r, 19.0, color(0.08, 0.08, 0.1, 0.72 * a));
         p.text(text, &res.hint, r, color(1.0, 1.0, 1.0, 0.82 * a));
+    }
+}
+
+fn lerp_rect(a: Rect, b: Rect, t: f32) -> Rect {
+    Rect {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        w: a.w + (b.w - a.w) * t,
+        h: a.h + (b.h - a.h) * t,
+    }
+}
+
+fn translate(dx: f32, dy: f32) -> Matrix3x2 {
+    Matrix3x2 {
+        M11: 1.0,
+        M12: 0.0,
+        M21: 0.0,
+        M22: 1.0,
+        M31: dx,
+        M32: dy,
+    }
+}
+
+/// Clock line at the top center in the style of the iOS lock screen:
+/// bold time, smaller dimmed date, sharing one baseline.
+fn draw_clock(p: &Painter, m: &UiModel, alpha: f32) {
+    if alpha <= 0.0 {
+        return;
+    }
+    let res = p.res;
+    let (w, h) = res.size;
+    let (cy, size) = layout::clock(h);
+    let box_h = size * 1.6;
+    let Some((time, tw, tb)) = p.measured(m.clock_time, &res.clock_time, box_h) else {
+        return;
+    };
+    let date = p.measured(m.clock_date, &res.clock_date, box_h);
+    let gap = size * 0.4;
+    let total = tw + date.as_ref().map_or(0.0, |(_, dw, _)| gap + dw);
+    let x = (w - total) / 2.0;
+    // Digits are ~0.7 em tall: center them on `cy`.
+    let baseline = cy + size * 0.35;
+    p.layout_at(&time, x, baseline - tb, color(1.0, 1.0, 1.0, 0.94 * alpha));
+    if let Some((dl, _, db)) = date {
+        p.layout_at(
+            &dl,
+            x + tw + gap,
+            baseline - db,
+            color(1.0, 1.0, 1.0, 0.62 * alpha),
+        );
     }
 }
 

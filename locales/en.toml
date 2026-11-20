@@ -9,6 +9,12 @@ esc_again = "Press Esc again to exit"
 waiting = "Waiting for Spotify …"
 esc_esc = "Esc Esc to exit"
 
+[clock]
+weekdays = "Sun,Mon,Tue,Wed,Thu,Fri,Sat"
+months = "Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec"
+date = "{weekday}, {month} {day}"
+hours = "12"
+
 [settings]
 title = "Settings"
 autosave = "Changes apply immediately and are saved automatically."

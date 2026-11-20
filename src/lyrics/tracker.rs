@@ -106,6 +106,16 @@ impl LyricsTracker {
         };
         self.split
     }
+
+    /// Lyrics available, holding `previous` while the next track's lyrics
+    /// load (max. 1.5 s) so views do not flicker on track changes.
+    pub fn available_held(&self, now: Instant, previous: bool) -> bool {
+        match &self.status {
+            Status::Found(_) => true,
+            Status::Pending { since, .. } if now - *since < LOADING_HOLD => previous,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
