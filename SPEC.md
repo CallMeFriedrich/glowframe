@@ -164,6 +164,7 @@ Lyrics als Chatverlauf im Stil von iMessage (dunkles Design). Ruhe-Ansicht im Ly
   - *Vorher (v1.0):* Bogen über ~60 % mit 15 % Grundglühen; bei einfarbigen Covern war kaum Bewegung zu sehen.
 - **Farben:**
   - **Farbmodus Cover:** 2–3 Farben aus dem Cover, als Verlauf vom Kopf zum Schweifende.
+  - **Mehrere Kometen (v1.4):** Hat das Cover mehrere **dominante** Farben (je mindestens ~10 % der Fläche und deutlich verschieden), läuft pro Farbe ein eigener Komet in dieser Farbe (2 oder 3), gleichmäßig über den Umfang verteilt; die Schweife sind dann etwas kürzer. Beim Trackwechsel blenden zusätzliche Kometen weich ein bzw. aus und die Abstände gleiten per Feder. Bei nur einer dominanten Farbe und bei fester Palette bleibt es bei einem Kometen mit Farbverlauf.
   - **Farbmodus Feste Palette:** Preset oder eigene Farben.
 - **Beat:**
   - **Bei jedem erkannten Beat:** Helligkeit und Breite pulsieren kurz (Attack ~10 ms, Decay ~180 ms).

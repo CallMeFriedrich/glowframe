@@ -21,7 +21,9 @@ cbuffer Params : register(b0)
     float  dither_seed;
     float  head_len;    // head size (gaussian width, fraction of the perimeter)
     float  lead_len;    // soft leading edge in front of the head
-    float2 pad0;
+    float2 comet_w;     // weights of comet 2 and 3 (v1.4, one per dominant color)
+    float  spread;      // distance between the comets (fraction of the perimeter)
+    float3 pad1;
 };
 
 float4 vs_main(uint id : SV_VertexID) : SV_Position
@@ -87,6 +89,20 @@ float3 palette3(float x)
     return x < 1.0 ? lerp(c0.rgb, c1.rgb, x) : lerp(c1.rgb, c2.rgb, x - 1.0);
 }
 
+// One comet with its head at `ph`: head and tail intensity, tail position.
+void comet_at(float s, float ph, out float head, out float tail, out float tail_t)
+{
+    // The head moves towards increasing s (clockwise); `behind` is the
+    // distance back along the tail.
+    float behind = frac(ph - s);
+    float ahead = frac(s - ph);
+    head = max(exp(-(behind * behind) / (head_len * head_len)),
+               exp(-(ahead * ahead) / (lead_len * lead_len)));
+    // Points just ahead of the head belong to the head (no color seam there).
+    tail_t = (ahead < behind) ? 0.0 : saturate(behind / tail_len);
+    tail = (ahead < behind) ? 0.0 : pow(1.0 - tail_t, 1.5) * 0.82;
+}
+
 float3 linear_to_srgb(float3 c)
 {
     c = saturate(c);
@@ -101,22 +117,32 @@ float4 ps_main(float4 pos : SV_Position) : SV_Target
     float sdf = sd_round_rect(p, half_size, corner);
     float coverage = saturate(0.5 - sdf);        // black outside the corners
 
-    // Comet along the perimeter. The head moves towards increasing s
-    // (clockwise); `behind` is the distance back along the tail.
+    // Comets along the perimeter: the first one always, a second and third
+    // one (weights comet_w) evenly spaced behind it when the cover has
+    // several dominant colors.
     float s = perimeter_coord(p, half_size, corner);
-    float behind = frac(phase - s);
-    float ahead = frac(s - phase);
-    float head = max(exp(-(behind * behind) / (head_len * head_len)),
-                     exp(-(ahead * ahead) / (lead_len * lead_len)));
-    // Points just ahead of the head belong to the head (no color seam there).
-    float tail_t = (ahead < behind) ? 0.0 : saturate(behind / tail_len);
-    float tail = (ahead < behind) ? 0.0 : pow(1.0 - tail_t, 1.5) * 0.82;
-    float comet = max(head, tail);
+    float h0, t0, tt0, h1, t1, tt1, h2, t2, tt2;
+    comet_at(s, phase, h0, t0, tt0);
+    comet_at(s, frac(phase - spread), h1, t1, tt1);
+    comet_at(s, frac(phase - 2.0 * spread), h2, t2, tt2);
+    float i0 = max(h0, t0);
+    float i1 = max(h1, t1) * comet_w.x;
+    float i2 = max(h2, t2) * comet_w.y;
+    float head = max(h0, max(h1 * comet_w.x, h2 * comet_w.y));
+    float comet = max(i0, max(i1, i2));
     float along = lerp(base_level, 1.0, comet);
 
-    // Color runs from the head (c0) to the tail end (c2) and settles into the
-    // palette middle for the base glow (no seam opposite the head).
-    float3 color = lerp(c1.rgb, palette3(tail_t), smoothstep(0.0, 0.35, comet));
+    // Single comet: color runs from the head (c0) to the tail end (c2) and
+    // settles into the palette middle for the base glow (no seam opposite
+    // the head). Several comets: each one in its own color, the base glow
+    // in their mix.
+    float multi = max(comet_w.x, comet_w.y);
+    float3 col0 = lerp(palette3(tt0), c0.rgb, multi);
+    float3 comet_color = (col0 * i0 + c1.rgb * i1 + c2.rgb * i2) / max(i0 + i1 + i2, 1e-4);
+    float3 mix_color = (c0.rgb + c1.rgb * comet_w.x + c2.rgb * comet_w.y)
+                     / (1.0 + comet_w.x + comet_w.y);
+    float3 base_color = lerp(c1.rgb, mix_color, multi);
+    float3 color = lerp(base_color, comet_color, smoothstep(0.0, 0.35, comet));
 
     // Falloff: soft glow plus a bright core line at the edge. Summing the
     // exponential per edge is a soft minimum of the edge distances, which

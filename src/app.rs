@@ -16,7 +16,7 @@ use winit::window::{CursorIcon, WindowId};
 use crate::audio::AudioAnalyzer;
 use crate::cli::CliArgs;
 use crate::color::{Oklab, linear_to_srgb};
-use crate::cover::{CoverResult, CoverWorker, Image, hd};
+use crate::cover::{CoverResult, CoverWorker, Image, Palette, hd};
 use crate::demo::Demo;
 use crate::fullscreen::{self, MonitorSignature, MonitorWindow};
 use crate::hotkey::Hotkey;
@@ -259,7 +259,7 @@ pub struct App {
     thumbs: HashMap<u64, ThumbImages>,
     hd_images: HashMap<u64, Arc<Image>>,
     hd_requested: HashSet<u64>,
-    cover_palette: Option<Vec<Oklab>>,
+    cover_palette: Option<Palette>,
     settings_window: Option<SettingsWindow>,
     settings_monitors: Vec<MonitorInfo>,
     /// Pending debounced save.
@@ -858,6 +858,7 @@ impl App {
                 }
                 self.thumbs.insert(key, ThumbImages { image, small });
                 if is_current && let Some(p) = palette {
+                    tracing::debug!(comets = p.comets, "cover palette");
                     self.cover_palette = Some(p);
                     let target = self.target_palette();
                     self.animator.set_palette(&target, Instant::now());
@@ -902,14 +903,17 @@ impl App {
         }
     }
 
-    /// Palette for the frame: cover colors, fixed palette, or fallback.
-    fn target_palette(&self) -> Vec<Oklab> {
+    /// Palette for the frame: cover colors (one comet per dominant color),
+    /// fixed palette, or fallback (single comet).
+    fn target_palette(&self) -> Palette {
         let f = &self.settings.frame;
         match (f.color_mode, &self.cover_palette) {
             (ColorMode::Cover, Some(p)) => p.clone(),
-            _ => preset_colors(f.palette, f.custom_colors)
-                .map(Oklab::from_rgb)
-                .to_vec(),
+            _ => Palette::single(
+                preset_colors(f.palette, f.custom_colors)
+                    .map(Oklab::from_rgb)
+                    .to_vec(),
+            ),
         }
     }
 

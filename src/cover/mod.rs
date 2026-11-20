@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, Sender};
 
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
-use crate::color::Oklab;
+pub use palette::Palette;
 pub use wic::Image;
 
 /// Edge length used for color extraction and the ambient blur (SPEC §6.3).
@@ -26,7 +26,7 @@ pub enum CoverResult {
         image: Option<Arc<Image>>,
         /// 64x64 version for the ambient glow.
         small: Option<Arc<Image>>,
-        palette: Option<Vec<Oklab>>,
+        palette: Option<Palette>,
     },
     Hd {
         album_key: u64,

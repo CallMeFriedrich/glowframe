@@ -6,6 +6,7 @@
 use std::time::{Duration, Instant};
 
 use crate::color::Oklab;
+use crate::cover::Palette;
 use crate::render::GlowParams;
 use crate::settings::model::{FALLBACK_PALETTE, FrameSettings, PalettePreset, Rgb};
 use crate::ui::anim::Spring;
@@ -92,6 +93,15 @@ pub fn to_stops(colors: &[Oklab]) -> [Oklab; 3] {
     }
 }
 
+/// Stops for the shader. With several comets, stop k is the color of comet
+/// k (no blended middle stop for two colors).
+fn palette_stops(p: &Palette) -> [Oklab; 3] {
+    match (p.comets, p.colors.as_slice()) {
+        (2.., [a, b]) => [*a, *b, *b],
+        _ => to_stops(&p.colors),
+    }
+}
+
 pub struct FrameAnimator {
     start: Instant,
     last: Option<Instant>,
@@ -107,6 +117,18 @@ pub struct FrameAnimator {
     from: [Oklab; 3],
     to: [Oklab; 3],
     transition_start: Option<Instant>,
+    /// One comet per dominant cover color (SPEC §5.5 v1.4): target count,
+    /// fade weights of comets 2 and 3, and their spacing.
+    comets: usize,
+    comet_w: [Spring; 2],
+    spread: Spring,
+}
+
+/// Each extra comet shortens the tails by this fraction.
+const TAIL_SHRINK_PER_COMET: f32 = 0.2;
+
+fn spread_for(comets: usize) -> f32 {
+    if comets >= 3 { 1.0 / 3.0 } else { 0.5 }
 }
 
 /// Per-frame inputs from the app.
@@ -135,12 +157,17 @@ impl FrameAnimator {
             from: stops,
             to: stops,
             transition_start: None,
+            comets: 1,
+            comet_w: [Spring::smooth(0.0, 1.4); 2],
+            spread: Spring::new(0.5, 1.6, 0.95),
         }
     }
 
-    /// Starts an OKLab transition (~1.5 s) from the current colors.
-    pub fn set_palette(&mut self, colors: &[Oklab], now: Instant) {
-        let target = to_stops(colors);
+    /// Starts an OKLab transition (~1.5 s) from the current colors; extra
+    /// comets fade in or out with springs.
+    pub fn set_palette(&mut self, palette: &Palette, now: Instant) {
+        self.comets = palette.comets.clamp(1, 3);
+        let target = palette_stops(palette);
         if target == self.to {
             return;
         }
@@ -150,10 +177,20 @@ impl FrameAnimator {
     }
 
     /// Sets the palette without transition (e.g. on mode start).
-    pub fn jump_palette(&mut self, colors: &[Oklab]) {
-        self.to = to_stops(colors);
+    pub fn jump_palette(&mut self, palette: &Palette) {
+        self.to = palette_stops(palette);
         self.from = self.to;
         self.transition_start = None;
+        self.comets = palette.comets.clamp(1, 3);
+        self.comet_w[0].set(f32::from(u8::from(self.comets >= 2)));
+        self.comet_w[1].set(f32::from(u8::from(self.comets >= 3)));
+        self.spread.set(spread_for(self.comets));
+    }
+
+    /// Number of comets currently targeted.
+    #[cfg(test)]
+    fn comets(&self) -> usize {
+        self.comets
     }
 
     pub fn current_stops(&self, now: Instant) -> [Oklab; 3] {
@@ -214,6 +251,15 @@ impl FrameAnimator {
         let beat = input.since_beat.map_or(0.0, beat_envelope) * beat_amount;
         let energy = 0.5 + (input.energy.clamp(0.0, 1.0) - 0.5) * beat_amount;
 
+        let w1 = self.comet_w[0]
+            .update(now, f32::from(u8::from(self.comets >= 2)))
+            .clamp(0.0, 1.0);
+        let w2 = self.comet_w[1]
+            .update(now, f32::from(u8::from(self.comets >= 3)))
+            .clamp(0.0, 1.0);
+        let spread = self.spread.update(now, spread_for(self.comets));
+        let tail_len = TAIL_LEN * (1.0 - TAIL_SHRINK_PER_COMET * (w1 + w2));
+
         let h = height as f32;
         let stops = self.current_stops(now);
         let lin = |c: Oklab| {
@@ -234,11 +280,13 @@ impl FrameAnimator {
             energy,
             corner: h * 0.012,
             base_level: BASE_LEVEL,
-            tail_len: TAIL_LEN,
+            tail_len,
             dither_seed: (time * 7.13).fract(),
             head_len: HEAD_LEN,
             lead_len: LEAD_LEN,
-            _pad: [0.0; 2],
+            comet_w: [w1, w2],
+            spread,
+            _pad: [0.0; 3],
         }
     }
 }
@@ -335,10 +383,55 @@ mod tests {
         let mut a = FrameAnimator::new(t0);
         let red = Oklab::from_rgb(Rgb(255, 0, 0));
         let blue = Oklab::from_rgb(Rgb(0, 0, 255));
-        a.jump_palette(&[red, red]);
-        a.set_palette(&[blue, blue], t0);
+        a.jump_palette(&Palette::single(vec![red, red]));
+        a.set_palette(&Palette::single(vec![blue, blue]), t0);
         let mid = a.current_stops(t0 + Duration::from_millis(750))[0];
         assert!(mid.dist(red) > 0.05 && mid.dist(blue) > 0.05);
         assert_eq!(a.current_stops(t0 + Duration::from_secs(2))[0], blue);
+    }
+
+    #[test]
+    fn extra_comets_fade_in_and_spread_out() {
+        let s = FrameSettings::default();
+        let t0 = Instant::now();
+        let mut a = FrameAnimator::new(t0);
+        let red = Oklab::from_rgb(Rgb(255, 0, 0));
+        let blue = Oklab::from_rgb(Rgb(0, 0, 255));
+        let green = Oklab::from_rgb(Rgb(0, 200, 0));
+        let start = a.update(t0, &inputs(FrameState::Playing, &s), 1920, 1080);
+        assert_eq!(start.comet_w, [0.0, 0.0]);
+        assert_eq!(start.tail_len, TAIL_LEN);
+        a.set_palette(
+            &Palette {
+                colors: vec![red, blue, green],
+                comets: 3,
+            },
+            t0,
+        );
+        assert_eq!(a.comets(), 3);
+        let p = run(&mut a, t0, 0, 8, &inputs(FrameState::Playing, &s));
+        assert!(p.comet_w[0] > 0.99 && p.comet_w[1] > 0.99);
+        assert!((p.spread - 1.0 / 3.0).abs() < 0.01);
+        assert!(p.tail_len < TAIL_LEN * 0.65);
+        // Back to one dominant color: extra comets fade out again.
+        a.set_palette(
+            &Palette::single(vec![red, blue]),
+            t0 + Duration::from_secs(8),
+        );
+        let p = run(&mut a, t0, 8000, 8, &inputs(FrameState::Playing, &s));
+        assert!(p.comet_w[0] < 0.01 && p.comet_w[1] < 0.01);
+        // Jumps (mode start) set the weights directly.
+        a.jump_palette(&Palette {
+            colors: vec![red, blue],
+            comets: 2,
+        });
+        let p = a.update(
+            t0 + Duration::from_secs(17),
+            &inputs(FrameState::Playing, &s),
+            1920,
+            1080,
+        );
+        assert_eq!(p.comet_w, [1.0, 0.0]);
+        assert!((p.spread - 0.5).abs() < 1e-6);
     }
 }

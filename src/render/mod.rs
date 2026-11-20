@@ -30,7 +30,11 @@ pub struct GlowParams {
     /// Comet head size and soft leading edge (fractions of the perimeter).
     pub head_len: f32,
     pub lead_len: f32,
-    pub _pad: [f32; 2],
+    /// Weights (0..1) of the second and third comet (SPEC §5.5 v1.4).
+    pub comet_w: [f32; 2],
+    /// Distance between the comets (fraction of the perimeter).
+    pub spread: f32,
+    pub _pad: [f32; 3],
 }
 
 const _: () = assert!(size_of::<GlowParams>().is_multiple_of(16));
