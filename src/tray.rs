@@ -39,7 +39,7 @@ impl Tray {
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .with_tooltip(APP_NAME)
-            .with_icon(app_icon(32).map_err(|e| e.to_string())?)
+            .with_icon(tray_icon_image()?)
             .build()
             .map_err(|e| e.to_string())?;
 
@@ -124,9 +124,20 @@ fn copy_wide(dst: &mut [u16], s: &str) {
     }
 }
 
-/// Generated placeholder icon (glowing ring in the fallback palette). The
-/// final app icon follows in phase 8.
-fn app_icon(size: u32) -> Result<Icon, tray_icon::BadIcon> {
+/// App icon from the exe resources (ID 1, see build.rs); Windows picks the
+/// matching size. Falls back to a generated ring if the resource is missing.
+fn tray_icon_image() -> Result<Icon, String> {
+    match Icon::from_resource(1, None) {
+        Ok(icon) => Ok(icon),
+        Err(e) => {
+            tracing::warn!(error = %e, "icon resource unavailable, using generated icon");
+            generated_icon(32).map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Generated glowing ring in the fallback palette.
+fn generated_icon(size: u32) -> Result<Icon, tray_icon::BadIcon> {
     let mut rgba = Vec::with_capacity((size * size * 4) as usize);
     let c = (size as f32 - 1.0) / 2.0;
     let r = size as f32 * 0.36;

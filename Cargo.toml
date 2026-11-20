@@ -63,3 +63,6 @@ codegen-units = 1
 strip = true
 panic = "abort"
 opt-level = 3
+
+[build-dependencies]
+embed-resource = "3"
