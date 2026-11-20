@@ -29,7 +29,9 @@ use crate::render::ui::{ButtonView, CoverLyricsView, LyricsView, TrackView, UiMo
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
 use crate::settings::paths::Paths;
+use crate::settings::store;
 use crate::settings::{MonitorMode, Settings};
+use crate::settings_window::{MonitorInfo, PanelEvent, SettingsWindow};
 use crate::tray::{MenuAction, Tray};
 use crate::ui::anim::{Smooth, Toggle, ease_in_out_cubic};
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
@@ -51,6 +53,29 @@ const LAYOUT_TRANSITION: Duration = Duration::from_millis(550);
 /// Fade/slide of the lyric line in the cover view (SPEC §5.4).
 const LINE_TRANSITION: f32 = 0.35;
 const DEMO_LYRICS: &str = include_str!("../assets/demo/lyrics.lrc");
+/// Settings are written this long after the last change (slider drags).
+const SAVE_DELAY: Duration = Duration::from_millis(600);
+
+/// Monitors for the settings list, left to right.
+fn monitor_infos(event_loop: &ActiveEventLoop) -> Vec<MonitorInfo> {
+    let primary = event_loop.primary_monitor();
+    let mut list: Vec<_> = event_loop
+        .available_monitors()
+        .map(|m| {
+            let size = m.size();
+            (
+                m.position().x,
+                MonitorInfo {
+                    id: m.name().unwrap_or_else(|| format!("{:?}", m.position())),
+                    label: format!("{}×{}", size.width, size.height),
+                    primary: primary.as_ref() == Some(&m),
+                },
+            )
+        })
+        .collect();
+    list.sort_by_key(|(x, _)| *x);
+    list.into_iter().map(|(_, m)| m).collect()
+}
 /// Mouse movements below this distance (physical px) are ignored.
 const MOUSE_JITTER: f64 = 2.0;
 
@@ -196,6 +221,10 @@ pub struct App {
     hd_images: HashMap<u64, Arc<Image>>,
     hd_requested: HashSet<u64>,
     cover_palette: Option<Vec<Oklab>>,
+    settings_window: Option<SettingsWindow>,
+    settings_monitors: Vec<MonitorInfo>,
+    /// Pending debounced save.
+    save_due: Option<Instant>,
     paths: Paths,
     settings: Settings,
     i18n: I18n,
@@ -244,6 +273,9 @@ impl App {
             hd_images: HashMap::new(),
             hd_requested: HashSet::new(),
             cover_palette: None,
+            settings_window: None,
+            settings_monitors: Vec::new(),
+            save_due: None,
             paths,
             settings,
             i18n,
@@ -360,6 +392,9 @@ impl App {
         if let Some(t) = self.tray.as_mut() {
             t.set_active(true, &self.i18n);
         }
+        if let Some(sw) = &self.settings_window {
+            sw.set_topmost(true);
+        }
     }
 
     fn deactivate(&mut self) {
@@ -375,6 +410,9 @@ impl App {
         fullscreen::keep_awake(false);
         if let Some(t) = self.tray.as_mut() {
             t.set_active(false, &self.i18n);
+        }
+        if let Some(sw) = &self.settings_window {
+            sw.set_topmost(false);
         }
     }
 
@@ -467,11 +505,168 @@ impl App {
         }
     }
 
-    fn show_settings(&mut self) {
-        tracing::info!(hotkey_error = ?self.hotkey_error, "settings window requested (phase 7)");
+    // ----- settings window -----
+
+    fn show_settings(&mut self, event_loop: &ActiveEventLoop) {
+        self.settings_monitors = monitor_infos(event_loop);
+        if let Some(sw) = &self.settings_window {
+            sw.focus();
+            sw.request_redraw();
+            return;
+        }
+        match SettingsWindow::open(event_loop, &self.i18n, self.mode == Mode::Active) {
+            Ok(sw) => {
+                tracing::info!("settings window opened");
+                self.settings_window = Some(sw);
+            }
+            Err(e) => tracing::error!(error = %e, "settings window unavailable"),
+        }
+    }
+
+    fn close_settings(&mut self) {
+        if let Some(sw) = self.settings_window.take() {
+            drop(sw);
+            tracing::info!("settings window closed");
+            // A hotkey recording in progress is abandoned.
+            self.register_hotkey();
+            self.save_settings_now();
+        }
+    }
+
+    fn settings_window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
+        match event {
+            WindowEvent::CloseRequested => self.close_settings(),
+            WindowEvent::RedrawRequested => {
+                let Some(mut sw) = self.settings_window.take() else {
+                    return;
+                };
+                let before = self.settings.clone();
+                let events = sw.render(
+                    &mut self.settings,
+                    &self.i18n,
+                    &self.settings_monitors,
+                    self.hotkey_error.as_deref(),
+                );
+                for e in events {
+                    self.on_panel_event(&mut sw, e);
+                }
+                self.settings_window = Some(sw);
+                if self.settings != before {
+                    self.apply_settings(&before, event_loop);
+                }
+            }
+            other => {
+                if let Some(sw) = self.settings_window.as_mut() {
+                    sw.on_event(&other);
+                }
+            }
+        }
+    }
+
+    fn on_panel_event(&mut self, sw: &mut SettingsWindow, event: PanelEvent) {
+        match event {
+            PanelEvent::StartRecording => {
+                // Free the current combination so it can be pressed again.
+                if let Some(h) = self.hotkey.as_mut() {
+                    h.suspend();
+                }
+                sw.set_recording(true, None);
+            }
+            PanelEvent::RecordFailed(e) => sw.set_recording(true, Some(e)),
+            PanelEvent::CancelRecording => {
+                self.register_hotkey();
+                sw.set_recording(false, None);
+            }
+            PanelEvent::Recorded(spec) => {
+                sw.set_recording(false, None);
+                let Some(h) = self.hotkey.as_mut() else {
+                    return;
+                };
+                match h.register(&spec) {
+                    Ok(()) => {
+                        self.settings.hotkey = spec;
+                        self.hotkey_error = None;
+                    }
+                    Err(e) => {
+                        tracing::warn!(hotkey = %spec, error = %e, "recorded hotkey unavailable");
+                        let _ = h.register(&self.settings.hotkey);
+                        self.hotkey_error = Some(e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Applies changed settings immediately (SPEC §7: live preview).
+    fn apply_settings(&mut self, old: &Settings, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        let new = self.settings.clone();
+        if new.language != old.language {
+            self.i18n.set_language(i18n::resolve_language(new.language));
+            if let Some(t) = &self.tray {
+                t.refresh_texts(&self.i18n);
+            }
+            if let Some(sw) = &self.settings_window {
+                sw.set_title(&self.i18n);
+                sw.request_redraw();
+            }
+        }
+        if new.monitors != old.monitors && self.mode == Mode::Active {
+            self.build_windows(event_loop);
+            if let Some(sw) = &self.settings_window {
+                sw.set_topmost(true);
+            }
+        }
+        let f = (&new.frame, &old.frame);
+        if (f.0.color_mode, f.0.palette, f.0.custom_colors)
+            != (f.1.color_mode, f.1.palette, f.1.custom_colors)
+        {
+            self.animator.set_palette(&self.target_palette(), now);
+        }
+        if f.0.beat != f.1.beat
+            && let Some(a) = &self.audio
+        {
+            a.set_sensitivity(f.0.beat as f32 / 100.0);
+        }
+        if new.lyrics.enabled != old.lyrics.enabled {
+            self.restart_lyrics(now);
+        }
+        if new.hd_cover
+            && !old.hd_cover
+            && let Some(s) = self.media.session.clone()
+        {
+            let key = self.current.as_ref().and_then(|t| t.album_key);
+            self.request_hd(&s, key);
+        }
+        self.save_due = Some(now + SAVE_DELAY);
+    }
+
+    /// Re-evaluates the lyrics of the current track (setting toggled).
+    fn restart_lyrics(&mut self, now: Instant) {
+        let Some(s) = self.media.session.clone() else {
+            return;
+        };
+        let eligible = self.settings.lyrics.enabled
+            && !s.title.trim().is_empty()
+            && !s.artist.trim().is_empty();
+        self.lyrics
+            .track_changed(now - Duration::from_secs(1), eligible);
+        if eligible && self.demo.is_some() {
+            self.lyrics.set_found(lrc::parse(DEMO_LYRICS));
+        }
+        self.request_lyrics(now);
+    }
+
+    fn save_settings_now(&mut self) {
+        if self.save_due.take().is_some() {
+            store::save(&self.paths.settings_file(), &self.settings);
+            tracing::debug!("settings saved");
+        }
     }
 
     fn quit(&mut self, event_loop: &ActiveEventLoop) {
+        self.close_settings();
+        self.save_settings_now();
         self.deactivate();
         self.media_service = None;
         self.cover_worker = None;
@@ -1096,7 +1291,7 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::ShowSettings => self.show_settings(),
+            UserEvent::ShowSettings => self.show_settings(event_loop),
             UserEvent::Quit => self.quit(event_loop),
             UserEvent::TrayDoubleClick => self.activate(event_loop),
             UserEvent::Hotkey(id) => {
@@ -1106,7 +1301,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Menu(id) => match self.tray.as_ref().and_then(|t| t.action(&id)) {
                 Some(MenuAction::Toggle) => self.toggle(event_loop),
-                Some(MenuAction::Settings) => self.show_settings(),
+                Some(MenuAction::Settings) => self.show_settings(event_loop),
                 Some(MenuAction::Quit) => self.quit(event_loop),
                 None => {}
             },
@@ -1117,6 +1312,14 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if self
+            .settings_window
+            .as_ref()
+            .is_some_and(|sw| sw.id() == id)
+        {
+            self.settings_window_event(event_loop, event);
+            return;
+        }
         match event {
             WindowEvent::RedrawRequested => {
                 let has_surface = self.window(id).is_some_and(|w| w.surface.is_some());
@@ -1169,14 +1372,28 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.mode == Mode::Active {
-            if Instant::now() >= self.next_monitor_check {
-                self.check_monitors(event_loop);
-                self.log_position();
-            }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_monitor_check));
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
+        let now = Instant::now();
+        if self.mode == Mode::Active && now >= self.next_monitor_check {
+            self.check_monitors(event_loop);
+            self.log_position();
+        }
+        if self.save_due.is_some_and(|t| now >= t) {
+            self.save_settings_now();
+        }
+        let repaint = self.settings_window.as_ref().and_then(|sw| sw.repaint_at());
+        if let Some(sw) = &self.settings_window
+            && repaint.is_some_and(|t| now >= t)
+        {
+            sw.request_redraw();
+        }
+        let deadlines = [
+            (self.mode == Mode::Active).then_some(self.next_monitor_check),
+            self.save_due,
+            repaint.filter(|t| *t > now),
+        ];
+        match deadlines.into_iter().flatten().min() {
+            Some(t) => event_loop.set_control_flow(ControlFlow::WaitUntil(t)),
+            None => event_loop.set_control_flow(ControlFlow::Wait),
         }
     }
 }

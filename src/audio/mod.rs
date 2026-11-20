@@ -52,7 +52,6 @@ impl AudioAnalyzer {
         Self { shared }
     }
 
-    #[allow(dead_code)] // live update from the settings window (phase 7)
     pub fn set_sensitivity(&self, s: f32) {
         self.shared
             .sensitivity

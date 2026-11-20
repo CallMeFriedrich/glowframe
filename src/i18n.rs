@@ -22,9 +22,12 @@ impl I18n {
         }
     }
 
-    #[allow(dead_code)] // live language switch from the settings window (phase 7)
     pub fn set_language(&mut self, lang: Language) {
         self.lang = lang;
+    }
+
+    pub fn language(&self) -> Language {
+        self.lang
     }
 
     /// Looks up `section.key`. Returns the key itself if it is missing everywhere.

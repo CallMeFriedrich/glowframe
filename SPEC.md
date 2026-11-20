@@ -34,7 +34,7 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 | Windows-APIs | `windows` crate (windows-rs): GSMTC, WASAPI, Direct3D 11, Direct2D, DirectWrite, WIC, DXGI |
 | Fenster/Event-Loop | `winit` für alle Fenster. Die Vollbildfenster rendern direkt über ihr HWND. |
 | Rendering Vollbild | D3D11-Swapchain (Flip-Model, VSync). Der Rahmen ist ein HLSL-Pixelshader, die UI (Cover, Text, Buttons) läuft über Direct2D/DirectWrite auf derselben DXGI-Surface. |
-| Einstellungsfenster | `egui` 0.37 über `egui-winit` + `egui_glow` (glutin, OpenGL über das System-`opengl32.dll`) im gemeinsamen winit-Event-Loop. Das Fenster existiert nur, solange es offen ist. *Entscheidung Phase 0:* `eframe` hat einen eigenen Event-Loop, `egui-wgpu` ist zu schwer für das Exe-Größenziel, und die D3D11-Backends (`egui-directx11`, `egui-d3d11`) hängen der egui-Version hinterher. |
+| Einstellungsfenster | `egui` 0.37 über `egui-winit` + `egui_glow` (glutin, OpenGL über das System-`opengl32.dll`) im gemeinsamen winit-Event-Loop. Das Fenster existiert nur, solange es offen ist. *Entscheidung Phase 0:* `eframe` hat einen eigenen Event-Loop, `egui-wgpu` ist zu schwer für das Exe-Größenziel, und die D3D11-Backends (`egui-directx11`, `egui-d3d11`) hängen der egui-Version hinterher. *Umsetzung Phase 7:* GL-Kontext direkt über glutin (nur WGL, nur hardwarebeschleunigte Pixelformate), ohne `glutin-winit`; Schrift Segoe UI aus `%WINDIR%\Fonts` statt eingebetteter egui-Fonts. |
 | Tray | `tray-icon` |
 | Globaler Hotkey | `global-hotkey` |
 | FFT | `realfft` / `rustfft` |

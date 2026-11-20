@@ -28,6 +28,13 @@ impl Hotkey {
         Ok(())
     }
 
+    /// Unregisters the hotkey (while a new one is being recorded).
+    pub fn suspend(&mut self) {
+        if let Some(old) = self.current.take() {
+            let _ = self.manager.unregister(old);
+        }
+    }
+
     pub fn matches(&self, id: u32) -> bool {
         self.current.is_some_and(|h| h.id() == id)
     }

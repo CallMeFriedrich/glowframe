@@ -16,6 +16,7 @@ mod media;
 mod net;
 mod render;
 mod settings;
+mod settings_window;
 mod single_instance;
 mod tray;
 mod ui;
