@@ -47,6 +47,10 @@ const HINT_DURATION: f32 = 1.5;
 const HINT_FADE: f32 = 0.4;
 /// How often the monitor layout is checked while active.
 const MONITOR_POLL: Duration = Duration::from_secs(2);
+/// Rendering runs as a chain (each frame requests the next). Modal loops
+/// such as the tray menu can swallow a redraw request and stop the chain;
+/// after this long without a frame it is restarted.
+const RENDER_WATCHDOG: Duration = Duration::from_millis(150);
 const DEMO_LYRICS: &str = include_str!("../assets/demo/lyrics.lrc");
 /// Settings are written this long after the last change (slider drags).
 const SAVE_DELAY: Duration = Duration::from_millis(600);
@@ -268,6 +272,10 @@ pub struct App {
     clock: Option<(LocalTime, Language, String, String)>,
     monitors: Option<MonitorSignature>,
     next_monitor_check: Instant,
+    /// Time of the last rendered frame (render watchdog).
+    last_frame: Instant,
+    /// Number of watchdog restarts (diagnostics).
+    watchdog_restarts: u64,
     last_esc: Option<Instant>,
     hint_since: Option<Instant>,
     initialized: bool,
@@ -319,6 +327,8 @@ impl App {
             clock: None,
             monitors: None,
             next_monitor_check: now,
+            last_frame: now,
+            watchdog_restarts: 0,
             last_esc: None,
             hint_since: None,
             initialized: false,
@@ -1266,6 +1276,7 @@ impl App {
 
     fn render(&mut self, id: WindowId) {
         let now = Instant::now();
+        self.last_frame = now;
         let state = self.frame_state();
         let (since_beat, energy) = match (&self.demo, &self.audio) {
             (Some(d), _) => (d.since_beat(now), d.energy(now)),
@@ -1492,6 +1503,23 @@ impl ApplicationHandler<UserEvent> for App {
                 fullscreen::trim_working_set();
             }
         }
+        // Render watchdog: restart a stalled redraw chain.
+        let rendering =
+            self.mode == Mode::Active && self.windows.iter().any(|w| w.surface.is_some());
+        if rendering && now.saturating_duration_since(self.last_frame) >= RENDER_WATCHDOG {
+            self.watchdog_restarts += 1;
+            let n = self.watchdog_restarts;
+            if n <= 3 || n.is_multiple_of(100) {
+                tracing::warn!(
+                    restarts = n,
+                    "render watchdog: redraw chain stalled, restarted"
+                );
+            }
+            self.last_frame = now;
+            for w in self.windows.iter().filter(|w| w.surface.is_some()) {
+                w.window.request_redraw();
+            }
+        }
         let repaint = self.settings_window.as_ref().and_then(|sw| sw.repaint_at());
         if let Some(sw) = &self.settings_window
             && repaint.is_some_and(|t| now >= t)
@@ -1500,6 +1528,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
         let deadlines = [
             (self.mode == Mode::Active).then_some(self.next_monitor_check),
+            rendering.then_some(self.last_frame + RENDER_WATCHDOG),
             self.save_due,
             self.trim_due,
             repaint.filter(|t| *t > now),

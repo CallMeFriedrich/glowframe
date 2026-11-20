@@ -50,32 +50,49 @@ impl IdleScheduler {
         self
     }
 
-    fn next_interval(&mut self) -> Duration {
+    fn next_random(&mut self) -> u64 {
         let mut x = self.rng;
         x ^= x << 13;
         x ^= x >> 7;
         x ^= x << 17;
         self.rng = x;
+        x
+    }
+
+    fn next_interval(&mut self) -> Duration {
+        let x = self.next_random();
         let span = (self.max - self.min).as_millis() as u64;
         self.min + Duration::from_millis(x % (span + 1))
     }
 
-    /// Restarts with the cover view (entering the mode, lyrics lost).
+    /// 50:50 choice (upper bits, the low bits of xorshift are weaker).
+    fn coin_flip(&mut self) -> IdleVariant {
+        if self.next_random() >> 63 == 1 {
+            IdleVariant::Focus
+        } else {
+            IdleVariant::Cover
+        }
+    }
+
+    /// Leaves the idle view: back to the cover view, schedule restarts.
     pub fn reset(&mut self) {
         self.variant = IdleVariant::Cover;
         self.next_switch = None;
     }
 
-    /// Advances the schedule. Only runs while alternation is possible
-    /// (`active`: lyrics available and the idle view is shown); otherwise
-    /// the cover view is used and the timer restarts later.
+    /// Advances the schedule while the idle view is shown (`active`).
+    /// Each time the idle view begins, cover view or lyrics focus view is
+    /// picked 50:50; afterwards they alternate every interval.
     pub fn update(&mut self, now: Instant, active: bool) -> IdleVariant {
         if !active {
             self.reset();
             return self.variant;
         }
         match self.next_switch {
-            None => self.next_switch = Some(now + self.next_interval()),
+            None => {
+                self.variant = self.coin_flip();
+                self.next_switch = Some(now + self.next_interval());
+            }
             Some(at) if now >= at => {
                 self.variant = match self.variant {
                     IdleVariant::Cover => IdleVariant::Focus,
@@ -117,16 +134,35 @@ mod tests {
     fn alternates_on_schedule() {
         let t0 = Instant::now();
         let mut s = IdleScheduler::new(7);
-        assert_eq!(s.update(t0, true), IdleVariant::Cover);
+        let first = s.update(t0, true);
+        let other = match first {
+            IdleVariant::Cover => IdleVariant::Focus,
+            IdleVariant::Focus => IdleVariant::Cover,
+        };
         let at = s.next_switch().unwrap_or(t0);
-        assert_eq!(
-            s.update(at - Duration::from_millis(1), true),
-            IdleVariant::Cover
-        );
-        assert_eq!(s.update(at, true), IdleVariant::Focus);
+        assert_eq!(s.update(at - Duration::from_millis(1), true), first);
+        assert_eq!(s.update(at, true), other);
         let at2 = s.next_switch().unwrap_or(at);
         assert!(at2 > at);
-        assert_eq!(s.update(at2, true), IdleVariant::Cover);
+        assert_eq!(s.update(at2, true), first);
+    }
+
+    #[test]
+    fn each_idle_start_is_a_fair_coin_flip() {
+        let t0 = Instant::now();
+        let mut s = IdleScheduler::new(12345);
+        let n = 4000;
+        let mut focus = 0;
+        for i in 0..n {
+            let t = t0 + Duration::from_secs(i);
+            if s.update(t, true) == IdleVariant::Focus {
+                focus += 1;
+            }
+            // Mouse moved: idle view left, next rest starts fresh.
+            s.update(t, false);
+        }
+        let share = focus as f64 / n as f64;
+        assert!((0.45..=0.55).contains(&share), "focus share {share}");
     }
 
     #[test]
@@ -134,9 +170,8 @@ mod tests {
         let t0 = Instant::now();
         let mut s = IdleScheduler::new(3);
         s.update(t0, true);
-        let at = s.next_switch().unwrap_or(t0);
-        assert_eq!(s.update(at, true), IdleVariant::Focus);
-        assert_eq!(s.update(at, false), IdleVariant::Cover);
+        assert!(s.next_switch().is_some());
+        assert_eq!(s.update(t0, false), IdleVariant::Cover);
         assert_eq!(s.next_switch(), None);
     }
 }

@@ -94,7 +94,9 @@ Es gibt drei Ansichten:
 
 - **Player-Ansicht:** erscheint bei Mausbewegung.
 - **Ruhe-Ansicht:** erscheint, wenn die Maus *N* Sekunden ruht (Einstellung, Standard 5 s). Sie ist entweder die **Cover-Ansicht** (§5.4) oder die **Lyrics-Fokus-Ansicht** (§5.4a, v1.2).
-  - Sind Lyrics verfügbar, wechseln sich Cover-Ansicht und Lyrics-Fokus-Ansicht in zufälligen Abständen von 5 min ± 2 min ab (weiche Überblendung per Feder). Ohne Lyrics bleibt es bei der Cover-Ansicht.
+  - Jedes Mal, wenn die Ruhe-Ansicht beginnt, wird mit 50:50-Chance gewählt, ob die Cover-Ansicht oder die Lyrics-Fokus-Ansicht erscheint.
+  - Bleibt die Maus länger ruhig, wechseln sich beide in zufälligen Abständen von 5 min ± 2 min ab (weiche Überblendung per Feder).
+  - Ohne Lyrics bleibt es bei der Cover-Ansicht.
 
 **Uhr (v1.2):** In allen Ansichten steht oben mittig eine Zeile im Stil des iOS-Sperrbildschirms: Uhrzeit fett, daneben das Datum normal und leicht gedimmt (DE: „16:46  Fr. 20. Nov.“, EN: „4:46  Fri, Nov 20“). Sie folgt der Sprache der Einstellungen und lässt sich in den Einstellungen ausschalten (§7); das Umschalten blendet weich ein bzw. aus.
 
