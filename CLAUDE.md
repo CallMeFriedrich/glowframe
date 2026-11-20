@@ -2,13 +2,13 @@
 
 Natives Windows-Programm in Rust: Spotify-„Now Playing“-Vollbildmodus mit rotierendem, beat-reaktivem Leuchtrahmen in Cover-Farben, Player-/Cover-Ansicht und zeilengenauen Lyrics.
 
-**Die verbindliche Spezifikation steht in `SPEC.md`.** Bei Widersprüchen gilt SPEC.md. Bei Unklarheiten Thomas fragen, nicht raten. Änderungen am Umfang werden zuerst in SPEC.md nachgezogen.
+**Die verbindliche Spezifikation steht in `SPEC.md`.** Bei Widersprüchen gilt SPEC.md. Bei Unklarheiten den Projektinhaber fragen, nicht raten. Änderungen am Umfang werden zuerst in SPEC.md nachgezogen.
 
 ## Zusammenarbeit
-- **Sprache:** Mit Thomas wird Deutsch gesprochen. Er möchte direkte, technisch präzise Antworten.
+- **Sprache:** Mit dem Projektinhaber wird Deutsch gesprochen. Er möchte direkte, technisch präzise Antworten.
 - **Code:** Bezeichner, Kommentare und Commit-Messages auf Englisch. UI-Texte nur über `locales/*.toml`.
-- **Visuelle Abnahme:** Visuelle Ergebnisse kann nur Thomas beurteilen. Nach jeder Phase mit sichtbarer Änderung bauen, starten und ihn um eine kurze Abnahme bitten, bevor es weitergeht.
-- **Der Vollbild-Modus überdeckt den ganzen Bildschirm.** Für eigene Tests deshalb immer mit `--exit-after <sek>` starten (siehe unten). Den Modus nie unangekündigt auf Thomas' Bildschirm starten.
+- **Visuelle Abnahme:** Visuelle Ergebnisse kann nur der Projektinhaber beurteilen. Nach jeder Phase mit sichtbarer Änderung bauen, starten und ihn um eine kurze Abnahme bitten, bevor es weitergeht.
+- **Der Vollbild-Modus überdeckt den ganzen Bildschirm.** Für eigene Tests deshalb immer mit `--exit-after <sek>` starten (siehe unten). Den Modus nie unangekündigt auf dem Bildschirm des Projektinhabers starten.
 
 ## Umgebung
 - **Plattform:** Windows nativ, **kein WSL**. Shell: PowerShell.
@@ -17,8 +17,8 @@ Natives Windows-Programm in Rust: Spotify-„Now Playing“-Vollbildmodus mit ro
   - `Microsoft.VisualStudio.2022.BuildTools` mit Workload `Microsoft.VisualStudio.Workload.VCTools` und Windows-SDK (`--includeRecommended`)
   - `JRSoftware.InnoSetup` (für den Installer)
   - `GitHub.cli`, `Git.Git` (falls nicht vorhanden)
-- **Admin-Rechte:** Installationen, die eine UAC-Bestätigung brauchen, vorher ankündigen. Thomas bestätigt sie selbst.
-- **GitHub:** Vor dem Anlegen des Repos muss Thomas `gh auth login` selbst durchführen. Darum bitten, nicht umgehen.
+- **Admin-Rechte:** Installationen, die eine UAC-Bestätigung brauchen, vorher ankündigen. Der Projektinhaber bestätigt sie selbst.
+- **GitHub:** Vor dem Anlegen des Repos muss der Projektinhaber `gh auth login` selbst durchführen. Darum bitten, nicht umgehen.
 
 ## Stack (Details in SPEC.md §3)
 - **Kern:** `windows` (windows-rs) für GSMTC, WASAPI, D3D11, D2D, DirectWrite, WIC und DXGI.
@@ -85,7 +85,7 @@ cargo test
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `chore:` …), mindestens ein Commit pro abgeschlossener Phase. Pushen nach jeder Phase.
 
 ## Phasenplan
-Jede Phase endet mit: Build ok, `clippy` sauber, Tests grün, Commit + Push und bei sichtbaren Änderungen der Abnahme durch Thomas.
+Jede Phase endet mit: Build ok, `clippy` sauber, Tests grün, Commit + Push und bei sichtbaren Änderungen der Abnahme durch den Projektinhaber.
 
 0. **Setup:**
    - Toolchain installieren
@@ -127,7 +127,7 @@ Jede Phase endet mit: Build ok, `clippy` sauber, Tests grün, Commit + Push und 
 8. **Packaging:**
    - Icon/Versionsinfo
    - Inno-Setup-Skript, `package.ps1`
-   - Test auf sauberem System (sofern möglich: Thomas fragen)
+   - Test auf sauberem System (sofern möglich: den Projektinhaber fragen)
 9. **Feinschliff:** Performance gegen die Zielwerte aus SPEC §3 messen, Optimierungen, Akzeptanzkriterien SPEC §10 durchgehen.
 
 ## Bekannte Stolperstellen
