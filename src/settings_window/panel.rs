@@ -5,7 +5,7 @@ use egui::{Color32, RichText, Ui};
 
 use super::hotkey_rec::{self, RecordError};
 use crate::i18n::I18n;
-use crate::settings::model::{ColorMode, Language, PalettePreset, Rgb};
+use crate::settings::model::{ColorMode, Language, LyricsStyle, PalettePreset, Rgb};
 use crate::settings::{MonitorMode, Settings};
 
 pub const ACCENT: Color32 = Color32::from_rgb(0xFF, 0x2E, 0xA6);
@@ -211,6 +211,19 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                     ui.indent("lyrics_sub", |ui| {
                         ui.checkbox(&mut l.in_player, i18n.t("settings.lyrics_player"));
                         ui.checkbox(&mut l.in_cover, i18n.t("settings.lyrics_cover"));
+                        ui.horizontal(|ui| {
+                            ui.label(i18n.t("settings.lyrics_style"));
+                            ui.radio_value(
+                                &mut l.style,
+                                LyricsStyle::Classic,
+                                i18n.t("settings.style_classic"),
+                            );
+                            ui.radio_value(
+                                &mut l.style,
+                                LyricsStyle::Messages,
+                                i18n.t("settings.style_messages"),
+                            );
+                        });
                     });
                     egui::CollapsingHeader::new(i18n.t("settings.advanced"))
                         .id_salt("lyrics_advanced")

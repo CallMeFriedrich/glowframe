@@ -74,10 +74,44 @@ impl Spring {
     }
 }
 
+/// Closed-form step response of the same spring (0 -> 1 starting at rest),
+/// `t` seconds after the start. Used where the start time is known and no
+/// per-frame state is wanted (chat bubbles popping in).
+pub fn spring_step(t: f32, response: f32, damping_ratio: f32) -> f32 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    let omega = std::f32::consts::TAU / response.max(0.01);
+    let z = damping_ratio.clamp(0.0, 0.999);
+    let wd = omega * (1.0 - z * z).sqrt();
+    let decay = (-z * omega * t).exp();
+    if decay < 1e-5 {
+        return 1.0;
+    }
+    1.0 - decay * ((wd * t).cos() + z * omega / wd * (wd * t).sin())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn closed_form_matches_the_integrated_spring() {
+        let t0 = Instant::now();
+        let mut s = Spring::new(0.0, 0.45, 0.65);
+        s.update(t0, 1.0);
+        for i in 1..=150u64 {
+            let v = s.update(t0 + Duration::from_millis(i * 4), 1.0);
+            let c = spring_step(i as f32 * 0.004, 0.45, 0.65);
+            // Semi-implicit Euler at 480 Hz deviates slightly from the exact solution.
+            assert!((v - c).abs() < 0.02, "t={} {v} vs {c}", i * 4);
+        }
+        assert_eq!(spring_step(0.0, 0.45, 0.65), 0.0);
+        assert_eq!(spring_step(10.0, 0.45, 0.65), 1.0);
+        // Bouncy: overshoots.
+        assert!((0..100).any(|i| spring_step(i as f32 * 0.01, 0.45, 0.65) > 1.05));
+    }
 
     fn run(mut s: Spring, target: f32, ms: u64) -> (f32, f32) {
         let t0 = Instant::now();

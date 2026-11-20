@@ -71,6 +71,9 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - **Beim ersten Esc** erscheint unten mittig ein dezenter Hinweis „Nochmal Esc zum Beenden“ / „Press Esc again to exit“, der nach 1,5 s ausblendet.
 - **Alternativen:** der Hotkey oder Tray → Stoppen.
 
+### Taste F (v1.3)
+- Schaltet im laufenden Modus den Lyrics-Stil um: **Klassisch** ↔ **Nachrichten** (§5.4b). Die Wahl wird gespeichert und ist auch in den Einstellungen änderbar (§7).
+
 ### Einzelinstanz
 - **Mechanismus:** benannter Mutex.
 - **Zweiter Start:** Läuft das Programm schon, öffnet ein erneuter Start die Einstellungen der laufenden Instanz und beendet sich selbst.
@@ -97,6 +100,7 @@ Es gibt drei Ansichten:
   - Jedes Mal, wenn die Ruhe-Ansicht beginnt, wird mit 50:50-Chance gewählt, ob die Cover-Ansicht oder die Lyrics-Fokus-Ansicht erscheint.
   - Bleibt die Maus länger ruhig, wechseln sich beide in zufälligen Abständen von 5 min ± 2 min ab (weiche Überblendung per Feder).
   - Ohne Lyrics bleibt es bei der Cover-Ansicht.
+  - Im Lyrics-Stil **Nachrichten** (v1.3) ist die Ruhe-Ansicht stattdessen die Nachrichten-Ansicht (§5.4b); ohne Lyrics bleibt es auch dort bei der Cover-Ansicht.
 
 **Uhr (v1.2):** In allen Ansichten steht oben mittig eine Zeile im Stil des iOS-Sperrbildschirms: Uhrzeit fett, daneben das Datum normal und leicht gedimmt (DE: „16:46  Fr. 20. Nov.“, EN: „4:46  Fri, Nov 20“). Sie folgt der Sprache der Einstellungen und lässt sich in den Einstellungen ausschalten (§7); das Umschalten blendet weich ein bzw. aus.
 
@@ -140,6 +144,17 @@ Orientiert sich am ersten Screenshot.
 - **Links:** größeres Cover (füllt den frei gewordenen Platz), darunter Titel und Interpret.
 - **Rechts:** Lyrics im gleichen Stil wie in der Player-Ansicht.
 - Nur verfügbar, wenn synchronisierte Lyrics vorhanden und eingeschaltet sind.
+
+### 5.4b Nachrichten-Ansicht (v1.3)
+Lyrics als Chatverlauf im Stil von iMessage (dunkles Design). Ruhe-Ansicht im Lyrics-Stil „Nachrichten“, nur mit synchronisierten Lyrics.
+- **Kopf:** oben mittig unter der Uhr das Cover als runder Avatar, darunter Titel und Interpret (wie der Kontaktkopf eines Chats).
+- **Verlauf:** mittige Spalte. Jede Lyrics-Zeile ist eine Bubble; die neueste steht unten, ältere rücken nach oben und blenden zum oberen Rand hin aus.
+  - Bubbles abwechselnd links (grau) und rechts (blau), gelegentlich zwei hintereinander auf derselben Seite; die Seite ist pro Zeile fest (deterministisch).
+  - Die jeweils letzte Bubble einer Folge hat das typische Schwänzchen.
+- **Einblenden:** neue Bubble poppt mit Feder (Skalierung aus der Schwänzchen-Ecke mit leichtem Überschwingen) herein, die älteren rücken per Feder nach oben.
+- **Wort für Wort:** In der aktuellen Bubble werden die Wörter nacheinander hell; sie sind bis dahin gedimmt. Da LRCLIB nur Zeilenzeiten liefert, wird die Zeit bis zur nächsten Zeile nach Wortlänge auf die Wörter verteilt (Näherung).
+- **Instrumentale Lücken:** Tipp-Indikator (Bubble mit drei pulsierenden Punkten) auf der Seite der nächsten Zeile.
+- **Karten:** Nennt eine Zeile einen Ort (Liste bekannter Städte, Länder und Orte, DE/EN) oder Wörter wie Karte, Maps, Stadt, Straße, Brücke, erscheint sie als Karten-Bubble: oben eine selbst gezeichnete, stilisierte Mini-Karte (Straßen, Wasser, Pin; aus dem Text erzeugt, kein Kartendienst, kein Netz), darunter die Zeile fett und eine Ortszeile mit Pin-Symbol (genannter Ort, sonst ein Ort aus der Liste).
 
 ### 5.5 Leuchtrahmen
 - **Form:** Er folgt dem rechteckigen Bildschirmrand mit leicht abgerundeten Ecken und leuchtet weich nach innen aus (Glow-Falloff, keine harte Linie).
@@ -242,6 +257,7 @@ Orientiert sich am ersten Screenshot.
 | Lyrics | Lyrics anzeigen | an/aus (Hauptschalter) | an |
 | Lyrics | In Player-Ansicht | an/aus | an |
 | Lyrics | In Cover-Ansicht | an/aus | an |
+| Lyrics | Stil (v1.3, auch per Taste F) | Klassisch / Nachrichten | Klassisch |
 | Lyrics (erweitert) | Versatz | −2000 … +2000 ms | 0 |
 | Cover | HD-Cover laden | an/aus | an |
 

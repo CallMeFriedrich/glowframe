@@ -123,6 +123,64 @@ pub fn focus(w: f32, h: f32) -> FocusLayout {
     }
 }
 
+/// Messages view (SPEC §5.4b): contact header and chat column.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChatLayout {
+    pub avatar: Rect,
+    pub title: Rect,
+    pub artist: Rect,
+    pub title_size: f32,
+    pub artist_size: f32,
+    /// Chat column; bubbles align to its left/right edge.
+    pub column: Rect,
+    /// Bottom edge of the newest bubble.
+    pub anchor: f32,
+    /// Bubbles fade out towards this top edge.
+    pub top: f32,
+    pub font: f32,
+    pub max_text_w: f32,
+    pub pad_x: f32,
+    pub pad_y: f32,
+    pub radius: f32,
+    pub map_w: f32,
+    pub map_h: f32,
+}
+
+pub fn chat(w: f32, h: f32) -> ChatLayout {
+    let font = (0.027 * h).clamp(16.0, 58.0);
+    let col_w = (w * 0.44).min(h * 1.05);
+    let column = Rect::new((w - col_w) / 2.0, h * 0.3, col_w, h * 0.62);
+    let avatar_d = 0.075 * h;
+    let avatar = Rect::centered(w / 2.0, h * 0.155, avatar_d, avatar_d);
+    let title_size = font * 0.78;
+    let artist_size = font * 0.6;
+    let title = Rect::new(
+        w / 2.0 - col_w / 2.0,
+        avatar.y + avatar_d + 0.012 * h,
+        col_w,
+        title_size * 1.4,
+    );
+    let artist = Rect::new(title.x, title.y + title.h, col_w, artist_size * 1.4);
+    let map_w = (col_w * 0.5).max(font * 9.0).min(col_w * 0.8);
+    ChatLayout {
+        avatar,
+        title,
+        artist,
+        title_size,
+        artist_size,
+        column,
+        anchor: h * 0.84,
+        top: column.y,
+        font,
+        max_text_w: col_w * 0.62,
+        pad_x: font * 0.62,
+        pad_y: font * 0.36,
+        radius: font * 0.9,
+        map_w,
+        map_h: map_w * 0.42,
+    }
+}
+
 /// Clock line: vertical center and font size of the time (date is ~0.42×).
 pub fn clock(h: f32) -> (f32, f32) {
     (h * 0.065, (0.034 * h).clamp(18.0, 72.0))
@@ -290,6 +348,24 @@ mod tests {
             assert!(area.y > clock_y + clock_size);
             // Bigger than the player cover.
             assert!(f.cover.w > player_split(w, h).cover.w);
+        }
+    }
+
+    #[test]
+    fn chat_layout_fits_below_clock() {
+        for (w, h) in [
+            (1920.0, 1080.0),
+            (2560.0, 1440.0),
+            (1280.0, 1024.0),
+            (1080.0, 1920.0),
+        ] {
+            let c = chat(w, h);
+            let (clock_y, clock_size) = clock(h);
+            assert!(c.avatar.y > clock_y + clock_size, "{w}x{h}");
+            assert!(c.artist.y + c.artist.h < c.top, "{w}x{h}");
+            assert!(c.top < c.anchor && c.anchor < h, "{w}x{h}");
+            assert!(c.column.x > 0.0 && c.column.x + c.column.w < w);
+            assert!(c.max_text_w < c.column.w && c.map_w <= c.column.w);
         }
     }
 

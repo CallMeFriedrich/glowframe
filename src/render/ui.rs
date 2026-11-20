@@ -16,9 +16,11 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, D2D1_INTERPOLATION_MODE_LINEAR,
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_OPACITY_PROP_OPACITY, D2D1_PROPERTY_TYPE_FLOAT,
     D2D1_PROPERTY_TYPE_VECTOR2, D2D1_ROUNDED_RECT, D2D1_SCALE_PROP_SCALE, ID2D1Bitmap1,
-    ID2D1BitmapBrush1, ID2D1DeviceContext, ID2D1Effect, ID2D1LinearGradientBrush,
+    ID2D1BitmapBrush1, ID2D1DeviceContext, ID2D1Effect, ID2D1Factory, ID2D1LinearGradientBrush,
     ID2D1RenderTarget, ID2D1SolidColorBrush,
 };
+
+mod chat;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT,
     DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
@@ -104,6 +106,43 @@ pub struct CoverLyricsView<'a> {
     pub alpha: f32,
 }
 
+pub use crate::ui::chat::Side;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BubbleKind<'a> {
+    Text,
+    /// Typing indicator (instrumental gap).
+    Typing,
+    /// Map bubble: procedural map seed and location line.
+    Map {
+        label: &'a str,
+        seed: u64,
+    },
+}
+
+/// One bubble of the messages view (SPEC §5.4b).
+pub struct ChatBubble<'a> {
+    /// Running number; the scroll position is measured in these units.
+    pub seq: u64,
+    pub text: &'a str,
+    pub side: Side,
+    pub kind: BubbleKind<'a>,
+    /// Pop-in spring 0 -> 1 (overshoots slightly).
+    pub appear: f32,
+    /// Revealed words of the line being sung; `None` = fully shown.
+    pub reveal: Option<f32>,
+}
+
+pub struct ChatView<'a> {
+    pub bubbles: Vec<ChatBubble<'a>>,
+    /// Smoothly animated sequence number of the newest bubble.
+    pub scroll: f32,
+    pub title: &'a str,
+    pub artist: &'a str,
+    pub avatar: Option<&'a Arc<Image>>,
+    pub maps_label: &'a str,
+}
+
 pub struct UiModel<'a> {
     /// Seconds since mode start (dot animation).
     pub time: f32,
@@ -119,6 +158,9 @@ pub struct UiModel<'a> {
     pub view: f32,
     /// Idle view: 0 = cover view, 1 = lyrics focus view (SPEC §5.4a).
     pub focus: f32,
+    /// Messages view (SPEC §5.4b) and its blend over the classic idle views.
+    pub chat: Option<ChatView<'a>>,
+    pub chat_mix: f32,
     /// Clock line visibility 0..1 (setting, faded).
     pub clock: f32,
     /// Clock line (SPEC §5.2): bold time and dimmed date.
@@ -166,7 +208,12 @@ pub struct UiResources {
     clock_date: IDWriteTextFormat,
     focus_title: IDWriteTextFormat,
     focus_artist: IDWriteTextFormat,
+    chat: chat::ChatFormats,
+    factory: ID2D1Factory,
     brush: ID2D1SolidColorBrush,
+    /// Extra brushes for word-by-word reveal (drawing effects).
+    brush_hi: ID2D1SolidColorBrush,
+    brush_fade: ID2D1SolidColorBrush,
     scale: ID2D1Effect,
     blur: ID2D1Effect,
     opacity: ID2D1Effect,
@@ -313,7 +360,11 @@ impl UiResources {
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
                     false,
                 )?,
+                chat: chat::ChatFormats::new(dwrite, &ui_font, &icon_font, w, h)?,
+                factory: ctx.GetFactory()?,
                 brush: ctx.CreateSolidColorBrush(&white, None)?,
+                brush_hi: ctx.CreateSolidColorBrush(&white, None)?,
+                brush_fade: ctx.CreateSolidColorBrush(&white, None)?,
                 scale,
                 blur,
                 opacity,
@@ -1079,7 +1130,12 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     // ----- idle views: cover view <-> lyrics focus view -----
     // The cover morphs between both places (shared element), the rest
     // crossfades: bottom lyric lines out, title/artist and lyrics in.
-    let idle_a = view * content;
+    let chat_mix = if m.chat.is_some() {
+        m.chat_mix.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let idle_a = view * content * (1.0 - chat_mix);
     if idle_a > 0.0 {
         let base = cover_transform(m, w, h);
         p.set_transform(&base);
@@ -1127,6 +1183,13 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
             let slide = translate((1.0 - fa) * w * 0.03, 0.0);
             draw_lyrics(&p, m, &mat_mul(&slide, &base), idle_a * fa);
         }
+    }
+    // ----- messages view (SPEC §5.4b) -----
+    let chat_a = view * content * chat_mix;
+    if chat_a > 0.0
+        && let Some(c) = &m.chat
+    {
+        chat::draw(&p, m, c, &cover_transform(m, w, h), chat_a);
     }
     p.set_transform(&scale_about(1.0, 0.0, 0.0));
 

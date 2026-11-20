@@ -15,6 +15,9 @@ months = "Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec"
 date = "{weekday}, {month} {day}"
 hours = "12"
 
+[chat]
+maps = "Maps"
+
 [settings]
 title = "Settings"
 autosave = "Changes apply immediately and are saved automatically."
@@ -52,6 +55,9 @@ lyrics = "Lyrics"
 lyrics_enabled = "Show lyrics"
 lyrics_player = "In player view"
 lyrics_cover = "In cover view"
+lyrics_style = "Style (key F):"
+style_classic = "Classic"
+style_messages = "Messages"
 advanced = "Advanced"
 offset = "Offset"
 cover = "Cover"

@@ -108,6 +108,15 @@ impl Default for FrameSettings {
     }
 }
 
+/// Presentation of the lyrics in the idle view (SPEC §5.4b, key F).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LyricsStyle {
+    #[default]
+    Classic,
+    Messages,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LyricsSettings {
@@ -115,6 +124,7 @@ pub struct LyricsSettings {
     pub in_player: bool,
     pub in_cover: bool,
     pub offset_ms: i32,
+    pub style: LyricsStyle,
 }
 
 impl Default for LyricsSettings {
@@ -124,6 +134,7 @@ impl Default for LyricsSettings {
             in_player: true,
             in_cover: true,
             offset_ms: 0,
+            style: LyricsStyle::Classic,
         }
     }
 }

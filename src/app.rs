@@ -25,16 +25,20 @@ use crate::lyrics::lrc::{self, LineState};
 use crate::lyrics::{LyricsTracker, state_at};
 use crate::media::{Command, MediaService, MediaSnapshot, Playback, RepeatMode, Session};
 use crate::net::{NetJob, NetResult, NetWorker};
-use crate::render::ui::{ButtonView, CoverLyricsView, LyricsView, TrackView, UiModel};
+use crate::render::ui::{
+    BubbleKind, ButtonView, ChatBubble, ChatView, CoverLyricsView, LyricsView, TrackView, UiModel,
+};
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
-use crate::settings::model::Language;
+use crate::settings::model::{Language, LyricsStyle};
 use crate::settings::paths::Paths;
 use crate::settings::store;
 use crate::settings::{MonitorMode, Settings};
 use crate::settings_window::{MonitorInfo, PanelEvent, SettingsWindow};
 use crate::tray::{MenuAction, Tray};
 use crate::ui::anim::Spring;
+use crate::ui::anim::spring_step;
+use crate::ui::chat::{ChatThread, reveal_words};
 use crate::ui::clock::{self, ClockFormat, LocalTime};
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
 use crate::ui::idle::{IdleScheduler, IdleVariant};
@@ -194,6 +198,10 @@ struct LyricsUi {
     line: Option<usize>,
     prev_line: Option<usize>,
     line_change: Spring,
+    /// Messages view (SPEC §5.4b): thread, scroll in bubble units, blend.
+    thread: ChatThread,
+    chat_scroll: Spring,
+    chat_mix: Spring,
 }
 
 impl LyricsUi {
@@ -207,6 +215,9 @@ impl LyricsUi {
             line: None,
             prev_line: None,
             line_change: Spring::new(1.0, 0.45, 0.9),
+            thread: ChatThread::new(),
+            chat_scroll: Spring::new(0.0, 0.5, 0.86),
+            chat_mix: Spring::smooth(0.0, 0.55),
         }
     }
 }
@@ -226,6 +237,10 @@ struct UiFrame {
     scroll: f32,
     line_state: Option<LineState>,
     line_change: f32,
+    /// Playback position incl. lyrics offset (word-by-word reveal).
+    lyrics_pos: Option<Duration>,
+    chat_scroll: f32,
+    chat_mix: f32,
 }
 
 pub struct App {
@@ -433,6 +448,8 @@ impl App {
         }
         fullscreen::keep_awake(true);
         self.build_windows(event_loop);
+        // Grace period for GPU setup before the render watchdog may act.
+        self.last_frame = Instant::now() + Duration::from_secs(1);
         if let Some(t) = self.tray.as_mut() {
             t.set_active(true, &self.i18n);
         }
@@ -1133,18 +1150,18 @@ impl App {
             .lyrics_ui
             .cover
             .update(now, f32::from(u8::from(show_cover && found.is_some())));
-        let line_state = match (&found, &self.media.session) {
-            (Some(l), Some(s)) => {
-                let pos = s.clock.position(SystemTime::now());
-                let offset = Duration::from_millis(ls.offset_ms.unsigned_abs() as u64);
-                // Positive offset shows the lyrics earlier.
-                let pos = if ls.offset_ms >= 0 {
-                    pos + offset
-                } else {
-                    pos.saturating_sub(offset)
-                };
-                Some((l.id, state_at(&l.lines, pos)))
+        let lyrics_pos = self.media.session.as_ref().map(|s| {
+            let pos = s.clock.position(SystemTime::now());
+            let offset = Duration::from_millis(ls.offset_ms.unsigned_abs() as u64);
+            // Positive offset shows the lyrics earlier.
+            if ls.offset_ms >= 0 {
+                pos + offset
+            } else {
+                pos.saturating_sub(offset)
             }
+        });
+        let line_state = match (&found, lyrics_pos) {
+            (Some(l), Some(pos)) => Some((l.id, state_at(&l.lines, pos))),
             _ => None,
         };
         let scroll_target = line_state
@@ -1171,7 +1188,26 @@ impl App {
         // only appears while lyrics are available.
         self.ui.focus_lyrics = ls.enabled && self.lyrics.available_held(now, self.ui.focus_lyrics);
         let variant = self.ui.idle_views.update(now, cover_view);
-        let focus_target = variant == IdleVariant::Focus && self.ui.focus_lyrics;
+        // Messages style replaces the classic idle views (SPEC §5.4b).
+        let chat_target = ls.style == LyricsStyle::Messages && self.ui.focus_lyrics;
+        let chat_mix = self
+            .lyrics_ui
+            .chat_mix
+            .update(now, f32::from(u8::from(chat_target)));
+        if let (Some(l), Some((_, st))) = (&found, line_state) {
+            let rebuilt = self.lyrics_ui.thread.update(now, l.id, &l.lines, st);
+            let newest = self.lyrics_ui.thread.entries().last().map(|e| e.seq as f32);
+            if let Some(seq) = newest
+                && rebuilt
+            {
+                self.lyrics_ui.chat_scroll.set(seq);
+            }
+        }
+        let chat_scroll = match self.lyrics_ui.thread.entries().last() {
+            Some(e) => self.lyrics_ui.chat_scroll.update(now, e.seq as f32),
+            None => self.lyrics_ui.chat_scroll.value(),
+        };
+        let focus_target = variant == IdleVariant::Focus && self.ui.focus_lyrics && !chat_target;
         let focus = self.ui.focus.update(now, f32::from(u8::from(focus_target)));
         let clock = self
             .ui
@@ -1192,6 +1228,9 @@ impl App {
             scroll,
             line_state: line_state.map(|(_, st)| st),
             line_change,
+            lyrics_pos,
+            chat_scroll,
+            chat_mix,
         }
     }
 
@@ -1229,6 +1268,94 @@ impl App {
             alpha: frame.cover_lyrics.clamp(0.0, 1.0),
         };
         (Some(player), Some(cover))
+    }
+
+    /// Messages view model (SPEC §5.4b) from the thread state.
+    fn chat_view(&self, frame: &UiFrame, now: Instant) -> Option<ChatView<'_>> {
+        if frame.chat_mix <= 0.0 {
+            return None;
+        }
+        let l = self.lyrics.lyrics()?;
+        let thread = &self.lyrics_ui.thread;
+        let current = frame.line_state.and_then(|st| st.current);
+        let bubbles = thread
+            .entries()
+            .iter()
+            .map(|e| {
+                let appear = spring_step(
+                    now.saturating_duration_since(e.at).as_secs_f32(),
+                    0.42,
+                    0.62,
+                );
+                let Some(i) = e.line else {
+                    return ChatBubble {
+                        seq: e.seq,
+                        text: "",
+                        side: e.side,
+                        kind: BubbleKind::Typing,
+                        appear,
+                        reveal: None,
+                    };
+                };
+                let line = &l.lines[i];
+                // Only the line being sung reveals word by word.
+                let reveal = match (current, frame.lyrics_pos) {
+                    (Some(c), Some(pos)) if c == i => {
+                        let next = l.lines.get(i + 1).map(|n| n.time.saturating_sub(line.time));
+                        Some(reveal_words(
+                            &line.text,
+                            pos.saturating_sub(line.time),
+                            next,
+                        ))
+                    }
+                    _ => None,
+                };
+                let kind = match thread.map(i) {
+                    Some(m) => BubbleKind::Map {
+                        label: m.label,
+                        seed: m.seed,
+                    },
+                    None => BubbleKind::Text,
+                };
+                ChatBubble {
+                    seq: e.seq,
+                    text: &line.text,
+                    side: e.side,
+                    kind,
+                    appear,
+                    reveal,
+                }
+            })
+            .collect();
+        let track = self.current.as_ref();
+        let avatar = track.and_then(|t| {
+            let thumb = t.thumb_key.and_then(|k| self.thumbs.get(&k));
+            t.album_key
+                .and_then(|k| self.hd_images.get(&k))
+                .or(thumb.and_then(|i| i.image.as_ref()))
+        });
+        Some(ChatView {
+            bubbles,
+            scroll: frame.chat_scroll,
+            title: track.map_or("", |t| t.title.as_str()),
+            artist: track.map_or("", |t| t.artist.as_str()),
+            avatar,
+            maps_label: self.i18n.t("chat.maps"),
+        })
+    }
+
+    /// Key F: classic <-> messages lyrics style (SPEC §4, saved).
+    fn toggle_lyrics_style(&mut self) {
+        let l = &mut self.settings.lyrics;
+        l.style = match l.style {
+            LyricsStyle::Classic => LyricsStyle::Messages,
+            LyricsStyle::Messages => LyricsStyle::Classic,
+        };
+        tracing::info!(style = ?l.style, "lyrics style");
+        self.save_due = Some(Instant::now() + SAVE_DELAY);
+        if let Some(sw) = &self.settings_window {
+            sw.request_redraw();
+        }
     }
 
     /// Refreshes the cached clock line (once per minute or language change).
@@ -1336,6 +1463,8 @@ impl App {
             cover_lyrics_mix: frame.cover_lyrics,
             view: frame.view,
             focus: frame.focus,
+            chat: self.chat_view(&frame, now),
+            chat_mix: frame.chat_mix,
             clock: frame.clock,
             clock_time: self.clock.as_ref().map_or("", |c| c.2.as_str()),
             clock_date: self.clock.as_ref().map_or("", |c| c.3.as_str()),
@@ -1450,6 +1579,13 @@ impl ApplicationHandler<UserEvent> for App {
                     && event.logical_key == Key::Named(NamedKey::Escape) =>
             {
                 self.on_escape();
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed
+                    && !event.repeat
+                    && matches!(&event.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("f")) =>
+            {
+                self.toggle_lyrics_style();
             }
             #[cfg(debug_assertions)]
             WindowEvent::KeyboardInput { event, .. }
