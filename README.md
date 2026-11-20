@@ -20,6 +20,9 @@ beat, with a player view, a large cover view and line-synced lyrics.
 - **Lyrics focus view:** large cover on the left, lyrics on the right; while
   idle, it or the cover view is picked at random, then they alternate every
   few minutes
+- **Messages style:** press **F** to show the lyrics as a chat thread instead:
+  message bubbles pop in line by line, words light up as they are sung, and
+  lines that mention a place appear as a small map card.
 - **Cover view:** after a few seconds without mouse movement the cover is shown
   large, with the current lyric line underneath.
 - **Synced lyrics:** line by line from [LRCLIB](https://lrclib.net), Apple
@@ -88,7 +91,8 @@ Install the new version over the old one (installer) or replace
    icon, or via right-click → **Start**.
 4. Move the mouse to see the player and its controls. After 5 seconds without
    movement the cover view appears.
-5. Press **Esc twice** (or Ctrl+Alt+L again) to leave the fullscreen mode.
+5. Press **F** to switch the lyrics between the classic and the messages style.
+6. Press **Esc twice** (or Ctrl+Alt+L again) to leave the fullscreen mode.
 
 Right-click the tray icon for **Start/Stop**, **Settings** and **Quit**.
 
@@ -106,7 +110,7 @@ the fullscreen mode is running, and are saved automatically.
 | Monitors | Per monitor: **Animation** (frame and player), **Black**, or **Free** (not covered). Default: primary monitor animation, others black |
 | View | Time until the cover view (2–60 s), show date and time on/off |
 | Frame | Brightness, width, rotation speed, beat reaction (0 % turns the beat off), color mode (cover colors or a fixed palette: Neon Pink, Ocean, Sunset, Mono, custom colors) |
-| Lyrics | On/off, in player view, in cover view, timing offset (−2000 to +2000 ms) |
+| Lyrics | On/off, in player view, in cover view, style (classic/messages), timing offset (−2000 to +2000 ms) |
 | Cover | Load HD covers |
 
 ## Privacy
