@@ -74,7 +74,50 @@ impl PlayerLayout {
 
 /// Centered player view without lyrics.
 pub fn player(w: f32, h: f32) -> PlayerLayout {
-    let cx = w / 2.0;
+    player_at(w / 2.0, w, h)
+}
+
+/// Player block in the left ~40 % column next to the lyrics (SPEC §5.3).
+pub fn player_split(w: f32, h: f32) -> PlayerLayout {
+    player_at(w * 0.21, w * 0.4, h)
+}
+
+/// Area of the lyrics in the split layout (right ~60 %).
+pub fn lyrics_area(w: f32, h: f32) -> Rect {
+    Rect::new(w * 0.44, h * 0.08, w * 0.5, h * 0.84)
+}
+
+/// Player layout between centered (`t` = 0) and split (`t` = 1).
+pub fn player_mixed(w: f32, h: f32, t: f32) -> PlayerLayout {
+    if t <= 0.0 {
+        return player(w, h);
+    }
+    let (a, b) = (player(w, h), player_split(w, h));
+    if t >= 1.0 {
+        return b;
+    }
+    let lr = |x: Rect, y: Rect| Rect {
+        x: x.x + (y.x - x.x) * t,
+        y: x.y + (y.y - x.y) * t,
+        w: x.w + (y.w - x.w) * t,
+        h: x.h + (y.h - x.h) * t,
+    };
+    let mut buttons = a.buttons;
+    for (dst, (_, r)) in buttons.iter_mut().zip(b.buttons.iter()) {
+        dst.1 = lr(dst.1, *r);
+    }
+    PlayerLayout {
+        cover: lr(a.cover, b.cover),
+        title: lr(a.title, b.title),
+        artist: lr(a.artist, b.artist),
+        buttons,
+        ..a
+    }
+}
+
+/// Player block centered at `cx` within a column of width `col_w`.
+fn player_at(cx: f32, col_w: f32, h: f32) -> PlayerLayout {
+    let w = col_w;
     let cover = (0.30 * h).min(0.55 * w);
     let title_size = (0.026 * h).clamp(16.0, 56.0);
     let artist_size = title_size * 0.7;
@@ -120,10 +163,18 @@ pub fn player(w: f32, h: f32) -> PlayerLayout {
     }
 }
 
-/// Large centered cover (~70 % of the screen height).
-pub fn cover_view(w: f32, h: f32) -> Rect {
-    let size = (0.70 * h).min(0.9 * w);
-    Rect::centered(w / 2.0, h / 2.0, size, size)
+/// Large centered cover (~70 % of the screen height). With lyrics shown
+/// below (`lyrics` = 0..1) it moves up and shrinks slightly.
+pub fn cover_view(w: f32, h: f32, lyrics: f32) -> Rect {
+    let size = ((0.70 - 0.06 * lyrics) * h).min(0.9 * w);
+    Rect::centered(w / 2.0, h * (0.5 - 0.06 * lyrics), size, size)
+}
+
+/// Font sizes of the lyrics: split view, cover view current/next line.
+pub fn lyrics_sizes(h: f32) -> (f32, f32, f32) {
+    let big = (0.04 * h).clamp(22.0, 80.0);
+    let cover = (0.032 * h).clamp(18.0, 64.0);
+    (big, cover, cover * 0.72)
 }
 
 /// Font sizes for the standby screen.
@@ -158,6 +209,19 @@ mod tests {
     }
 
     #[test]
+    fn split_layout_stays_left_of_lyrics() {
+        let (w, h) = (1920.0, 1080.0);
+        let s = player_split(w, h);
+        let area = lyrics_area(w, h);
+        let right = s.buttons[4].1.x + s.buttons[4].1.w;
+        assert!(right < area.x && s.title.x + s.title.w < area.x);
+        assert_eq!(player_mixed(w, h, 0.0), player(w, h));
+        assert_eq!(player_mixed(w, h, 1.0), s);
+        let mid = player_mixed(w, h, 0.5);
+        assert!(mid.cover.x > s.cover.x && mid.cover.x < player(w, h).cover.x);
+    }
+
+    #[test]
     fn hit_test_buttons() {
         let l = player(1920.0, 1080.0);
         let (cx, cy) = l.buttons[2].1.center();
@@ -174,7 +238,7 @@ mod tests {
 
     #[test]
     fn cover_view_size() {
-        let r = cover_view(1920.0, 1080.0);
+        let r = cover_view(1920.0, 1080.0, 0.0);
         assert!((r.h - 756.0).abs() < 0.01);
         assert_eq!(r.center(), (960.0, 540.0));
     }

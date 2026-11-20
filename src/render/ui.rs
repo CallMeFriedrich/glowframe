@@ -1,35 +1,37 @@
-//! Direct2D/DirectWrite drawing of the fullscreen UI (SPEC §5.2–§5.4, §5.6):
-//! player view, cover view, standby screen, pause state and the Esc hint.
+//! Direct2D/DirectWrite drawing of the fullscreen UI (SPEC §5.2–§5.6):
+//! player view, lyrics, cover view, standby screen, pause state, Esc hint.
 
 use std::cell::RefCell;
 use std::sync::Arc;
 
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F,
-    D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D1_PIXEL_FORMAT,
+    D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D1GaussianBlur, CLSID_D2D1Opacity, CLSID_D2D1Scale, D2D1_BITMAP_BRUSH_PROPERTIES1,
     D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
-    D2D1_EXTEND_MODE_CLAMP, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
+    D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
     D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, D2D1_INTERPOLATION_MODE_LINEAR,
-    D2D1_OPACITY_PROP_OPACITY, D2D1_PROPERTY_TYPE_FLOAT, D2D1_PROPERTY_TYPE_VECTOR2,
-    D2D1_ROUNDED_RECT, D2D1_SCALE_PROP_SCALE, ID2D1Bitmap1, ID2D1DeviceContext, ID2D1Effect,
-    ID2D1SolidColorBrush,
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_OPACITY_PROP_OPACITY, D2D1_PROPERTY_TYPE_FLOAT,
+    D2D1_PROPERTY_TYPE_VECTOR2, D2D1_ROUNDED_RECT, D2D1_SCALE_PROP_SCALE, ID2D1Bitmap1,
+    ID2D1CommandList, ID2D1DeviceContext, ID2D1Effect, ID2D1RenderTarget, ID2D1SolidColorBrush,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT,
-    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_MEASURING_MODE_NATURAL,
-    DWRITE_PARAGRAPH_ALIGNMENT, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_FAR,
-    DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TRIMMING,
+    DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+    DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+    DWRITE_PARAGRAPH_ALIGNMENT_FAR, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER,
+    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_METRICS, DWRITE_TRIMMING,
     DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP, DWRITE_WORD_WRAPPING_WRAP,
-    IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat,
+    IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat, IDWriteTextLayout,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::core::{BOOL, HSTRING, Result};
 use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::cover::Image;
+use crate::lyrics::LyricLine;
 use crate::ui::layout::{self, Button, PlayerLayout, Rect};
 
 const GLYPH_PLAY: char = '\u{E768}';
@@ -63,7 +65,40 @@ pub struct ButtonView {
     pub press: f32,
 }
 
+/// Lyrics in the split player view.
+pub struct LyricsView<'a> {
+    /// Id of the lyrics (text layout cache key).
+    pub id: u64,
+    pub lines: &'a [LyricLine],
+    /// Smoothly animated line index (fractional; -1 = before the first line).
+    pub scroll: f32,
+    /// Instrumental gap: animated dots instead of a line.
+    pub gap: bool,
+    /// Overall opacity (layout transition).
+    pub alpha: f32,
+}
+
+/// Current/next line at the bottom of the cover view.
+pub struct CoverLyricsView<'a> {
+    pub current: &'a str,
+    pub next: &'a str,
+    /// Line shown before the last change (fades out).
+    pub previous: &'a str,
+    /// 0..1 progress of the last line change.
+    pub change: f32,
+    pub gap: bool,
+    pub alpha: f32,
+}
+
 pub struct UiModel<'a> {
+    /// Seconds since mode start (dot animation).
+    pub time: f32,
+    /// Player layout of this frame (centered/split transition).
+    pub player: PlayerLayout,
+    pub lyrics: Option<LyricsView<'a>>,
+    pub cover_lyrics: Option<CoverLyricsView<'a>>,
+    /// 0..1: cover view makes room for the lyrics lines.
+    pub cover_lyrics_mix: f32,
     /// 0 = player view, 1 = cover view (eased).
     pub view: f32,
     /// 0..1 blend towards the standby screen.
@@ -80,10 +115,23 @@ pub struct UiModel<'a> {
     pub esc_hint: Option<(&'a str, f32)>,
 }
 
+/// Text layouts of the lyric lines of one track, with their heights.
+struct LyricLayouts {
+    id: u64,
+    lines: Vec<(Option<IDWriteTextLayout>, f32)>,
+}
+
 /// Per-surface D2D/DWrite resources.
 pub struct UiResources {
-    layout: PlayerLayout,
     size: (f32, f32),
+    dwrite: IDWriteFactory,
+    lyric: IDWriteTextFormat,
+    lyric_size: f32,
+    cover_line: IDWriteTextFormat,
+    cover_next: IDWriteTextFormat,
+    lyric_layouts: RefCell<Option<LyricLayouts>>,
+    text_blur: ID2D1Effect,
+    text_opacity: ID2D1Effect,
     /// Effects work in pixels for 96-DPI bitmap inputs, positions in DIPs.
     dpi_scale: f32,
     title: IDWriteTextFormat,
@@ -111,6 +159,7 @@ impl UiResources {
     ) -> Result<Self> {
         let layout = layout::player(w, h);
         let (sb_big, sb_small) = layout::standby_sizes(h);
+        let (lyric_size, cover_size, cover_next_size) = layout::lyrics_sizes(h);
         let ui_font = pick_family(dwrite, &["Segoe UI Variable Display", "Segoe UI"]);
         let icon_font = pick_family(dwrite, &["Segoe Fluent Icons", "Segoe MDL2 Assets"]);
         let fmt = |family: &str, weight, size, para, wrap| {
@@ -123,10 +172,40 @@ impl UiResources {
             let opacity = ctx.CreateEffect(&CLSID_D2D1Opacity)?;
             blur.SetInput(0, &scale.GetOutput()?, false);
             opacity.SetInput(0, &blur.GetOutput()?, false);
+            let text_blur = ctx.CreateEffect(&CLSID_D2D1GaussianBlur)?;
+            let text_opacity = ctx.CreateEffect(&CLSID_D2D1Opacity)?;
+            text_opacity.SetInput(0, &text_blur.GetOutput()?, false);
+            let lyric = fmt(
+                &ui_font,
+                DWRITE_FONT_WEIGHT_BOLD,
+                lyric_size,
+                DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
+                true,
+            )?;
+            lyric.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
             let white = color(1.0, 1.0, 1.0, 1.0);
             Ok(Self {
-                layout,
                 size: (w, h),
+                dwrite: dwrite.clone(),
+                lyric,
+                lyric_size,
+                cover_line: fmt(
+                    &ui_font,
+                    DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                    cover_size,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+                    false,
+                )?,
+                cover_next: fmt(
+                    &ui_font,
+                    DWRITE_FONT_WEIGHT_NORMAL,
+                    cover_next_size,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+                    false,
+                )?,
+                lyric_layouts: RefCell::new(None),
+                text_blur,
+                text_opacity,
                 dpi_scale,
                 title: fmt(
                     &ui_font,
@@ -186,8 +265,49 @@ impl UiResources {
         }
     }
 
-    pub fn layout(&self) -> &PlayerLayout {
-        &self.layout
+    /// Size in DIPs.
+    pub fn size(&self) -> (f32, f32) {
+        self.size
+    }
+
+    /// Text layouts and heights of all lyric lines (cached per lyrics id).
+    fn with_lyric_layouts<R>(
+        &self,
+        view: &LyricsView,
+        width: f32,
+        f: impl FnOnce(&[(Option<IDWriteTextLayout>, f32)]) -> R,
+    ) -> R {
+        let mut cache = self.lyric_layouts.borrow_mut();
+        if cache.as_ref().is_none_or(|c| c.id != view.id) {
+            let empty_h = self.lyric_size * 0.9;
+            let lines = view
+                .lines
+                .iter()
+                .map(|l| {
+                    if l.text.is_empty() {
+                        return (None, empty_h);
+                    }
+                    let wide: Vec<u16> = l.text.encode_utf16().collect();
+                    // SAFETY: DirectWrite layout creation with a valid format.
+                    let layout = unsafe {
+                        self.dwrite
+                            .CreateTextLayout(&wide, &self.lyric, width, 10_000.0)
+                    };
+                    match layout {
+                        Ok(tl) => {
+                            let mut m = DWRITE_TEXT_METRICS::default();
+                            // SAFETY: out-pointer to a local struct.
+                            let h = unsafe { tl.GetMetrics(&mut m) }
+                                .map_or(self.lyric_size * 1.3, |()| m.height);
+                            (Some(tl), h)
+                        }
+                        Err(_) => (None, empty_h),
+                    }
+                })
+                .collect();
+            *cache = Some(LyricLayouts { id: view.id, lines });
+        }
+        f(cache.as_ref().map_or(&[], |c| c.lines.as_slice()))
     }
 
     /// Uploads an image once and caches the bitmap (by image id).
@@ -474,7 +594,287 @@ impl Painter<'_> {
     }
 }
 
-pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
+fn mat_mul(a: &Matrix3x2, b: &Matrix3x2) -> Matrix3x2 {
+    Matrix3x2 {
+        M11: a.M11 * b.M11 + a.M12 * b.M21,
+        M12: a.M11 * b.M12 + a.M12 * b.M22,
+        M21: a.M21 * b.M11 + a.M22 * b.M21,
+        M22: a.M21 * b.M12 + a.M22 * b.M22,
+        M31: a.M31 * b.M11 + a.M32 * b.M21 + b.M31,
+        M32: a.M31 * b.M12 + a.M32 * b.M22 + b.M32,
+    }
+}
+
+fn player_transform(m: &UiModel, w: f32, h: f32) -> Matrix3x2 {
+    scale_about(1.0 - 0.04 * m.view, w / 2.0, h / 2.0)
+}
+
+/// Placement of one lyric line.
+#[derive(Debug, Clone, Copy)]
+struct LineGeo {
+    x: f32,
+    y: f32,
+    scale: f32,
+    alpha: f32,
+    /// Close to the current position: drawn sharp, otherwise blurred.
+    sharp: bool,
+}
+
+/// Top of the current line (~40 % of the lyrics area, SPEC §5.3).
+fn lyrics_anchor(res: &UiResources, area: Rect) -> f32 {
+    area.y + area.h * 0.40 - res.lyric_size * 0.65
+}
+
+/// Calls `f` for every visible lyric line with its layout and placement.
+fn for_each_line(
+    res: &UiResources,
+    v: &LyricsView,
+    mut f: impl FnMut(&IDWriteTextLayout, LineGeo),
+) {
+    let (w, h) = res.size;
+    let area = layout::lyrics_area(w, h);
+    let anchor = lyrics_anchor(res, area);
+    res.with_lyric_layouts(v, area.w, |lines| {
+        if lines.is_empty() {
+            return;
+        }
+        let gap = res.lyric_size * 0.55;
+        let mut prefix = Vec::with_capacity(lines.len() + 1);
+        let mut acc = 0.0;
+        for (_, lh) in lines {
+            prefix.push(acc);
+            acc += lh + gap;
+        }
+        prefix.push(acc);
+        // Fractional scroll position in pixels.
+        let pos = if v.scroll < 0.0 {
+            v.scroll * (lines[0].1 + gap)
+        } else {
+            let s = v.scroll.min((lines.len() - 1) as f32);
+            let i = s.floor() as usize;
+            let next = prefix[(i + 1).min(lines.len() - 1)];
+            prefix[i] + (next - prefix[i]) * s.fract()
+        };
+        let fade_zone = area.h * 0.18;
+        for (i, (tl, lh)) in lines.iter().enumerate() {
+            let y = anchor + prefix[i] - pos;
+            if y + lh < area.y || y > area.y + area.h {
+                continue;
+            }
+            let Some(tl) = tl else { continue };
+            let d = (i as f32 - v.scroll).abs().min(1.0);
+            let fade = ((y + lh - area.y) / fade_zone).clamp(0.0, 1.0)
+                * ((area.y + area.h - y) / fade_zone).clamp(0.0, 1.0);
+            f(
+                tl,
+                LineGeo {
+                    x: area.x,
+                    y,
+                    scale: 1.0 - 0.2 * d,
+                    alpha: (1.0 - 0.66 * d) * fade,
+                    sharp: d < 0.5,
+                },
+            );
+        }
+    });
+}
+
+/// Draws one lyric line scaled around its top-left corner.
+fn draw_line(
+    ctx: &ID2D1DeviceContext,
+    res: &UiResources,
+    base: &Matrix3x2,
+    tl: &IDWriteTextLayout,
+    g: LineGeo,
+    alpha: f32,
+) {
+    if alpha <= 0.0 {
+        return;
+    }
+    let local = scale_about(g.scale, g.x, g.y);
+    // SAFETY: called between BeginDraw/EndDraw on this context.
+    unsafe {
+        ctx.SetTransform(&mat_mul(&local, base));
+        res.brush.SetColor(&color(1.0, 1.0, 1.0, alpha));
+        ctx.DrawTextLayout(
+            Vector2 { X: g.x, Y: g.y },
+            tl,
+            &res.brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+        );
+        ctx.SetTransform(base);
+    }
+}
+
+/// Pre-pass (outside the main BeginDraw): records the lines away from the
+/// current one into a command list, which the main pass draws blurred.
+pub fn record_blurred_lyrics(
+    ctx: &ID2D1DeviceContext,
+    res: &UiResources,
+    m: &UiModel,
+) -> Option<ID2D1CommandList> {
+    let v = m.lyrics.as_ref()?;
+    if v.alpha * (1.0 - m.view) * (1.0 - m.standby) <= 0.0 {
+        return None;
+    }
+    let identity = scale_about(1.0, 0.0, 0.0);
+    // SAFETY: the original target is restored before returning.
+    unsafe {
+        let list = ctx.CreateCommandList().ok()?;
+        let old = ctx.GetTarget().ok();
+        ctx.SetTarget(&list);
+        ctx.BeginDraw();
+        ctx.SetTransform(&identity);
+        for_each_line(res, v, |tl, g| {
+            if !g.sharp {
+                draw_line(ctx, res, &identity, tl, g, g.alpha);
+            }
+        });
+        let ok = ctx.EndDraw(None, None).is_ok() && list.Close().is_ok();
+        if let Some(old) = old {
+            ctx.SetTarget(&old);
+        }
+        ok.then_some(list)
+    }
+}
+
+/// Three pulsing dots for instrumental gaps.
+fn draw_dots(p: &Painter, x: f32, cy: f32, size: f32, time: f32, alpha: f32) {
+    for k in 0..3 {
+        let phase = (time * 1.4 - k as f32 * 0.22) * std::f32::consts::TAU;
+        let a = 0.3 + 0.7 * (0.5 + 0.5 * phase.sin());
+        let r = size * (0.11 + 0.02 * (0.5 + 0.5 * phase.sin()));
+        p.circle(
+            x + size * 0.15 + k as f32 * size * 0.5,
+            cy,
+            r,
+            color(1.0, 1.0, 1.0, a * alpha),
+        );
+    }
+}
+
+/// Lyrics in the split player view (inside the player transform).
+fn draw_lyrics(p: &Painter, m: &UiModel, blurred: Option<&ID2D1CommandList>, alpha: f32) {
+    let Some(v) = &m.lyrics else { return };
+    let a = v.alpha * alpha;
+    if a <= 0.0 {
+        return;
+    }
+    let res = p.res;
+    let (w, h) = res.size;
+    let base = player_transform(m, w, h);
+    if let Some(list) = blurred {
+        // SAFETY: effect property writes with matching types; drawing between
+        // BeginDraw/EndDraw.
+        unsafe {
+            res.text_blur.SetInput(0, list, false);
+            let _ = res.text_blur.SetValue(
+                D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION.0 as u32,
+                D2D1_PROPERTY_TYPE_FLOAT,
+                &(1.3 * res.dpi_scale).to_le_bytes(),
+            );
+            let _ = res.text_opacity.SetValue(
+                D2D1_OPACITY_PROP_OPACITY.0 as u32,
+                D2D1_PROPERTY_TYPE_FLOAT,
+                &a.clamp(0.0, 1.0).to_le_bytes(),
+            );
+            if let Ok(out) = res.text_opacity.GetOutput() {
+                p.ctx.DrawImage(
+                    &out,
+                    None,
+                    None,
+                    D2D1_INTERPOLATION_MODE_LINEAR,
+                    D2D1_COMPOSITE_MODE_SOURCE_OVER,
+                );
+            }
+        }
+    }
+    for_each_line(res, v, |tl, g| {
+        if g.sharp {
+            draw_line(p.ctx, res, &base, tl, g, g.alpha * a);
+        }
+    });
+    if v.gap {
+        let area = layout::lyrics_area(w, h);
+        let cy = lyrics_anchor(res, area) + res.lyric_size * 0.62;
+        draw_dots(p, area.x, cy, res.lyric_size, m.time, a);
+    }
+}
+
+/// Current and next line at the bottom of the cover view (SPEC §5.4).
+fn draw_cover_lyrics(p: &Painter, m: &UiModel, alpha: f32) {
+    let Some(c) = &m.cover_lyrics else { return };
+    let a = c.alpha * alpha;
+    if a <= 0.0 {
+        return;
+    }
+    let res = p.res;
+    let (w, h) = res.size;
+    // Subtle gradient towards black for readability.
+    // SAFETY: local brush resources, drawing between BeginDraw/EndDraw.
+    unsafe {
+        let stops = [
+            D2D1_GRADIENT_STOP {
+                position: 0.0,
+                color: color(0.0, 0.0, 0.0, 0.0),
+            },
+            D2D1_GRADIENT_STOP {
+                position: 1.0,
+                color: color(0.0, 0.0, 0.0, 0.8 * a),
+            },
+        ];
+        let rt: &ID2D1RenderTarget = p.ctx;
+        if let Ok(coll) =
+            rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
+        {
+            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                startPoint: Vector2 { X: 0.0, Y: h * 0.7 },
+                endPoint: Vector2 { X: 0.0, Y: h },
+            };
+            if let Ok(brush) = p.ctx.CreateLinearGradientBrush(&props, None, &coll) {
+                p.ctx
+                    .FillRectangle(&d2d_rect(Rect::new(0.0, h * 0.7, w, h * 0.3)), &brush);
+            }
+        }
+    }
+    let (_, size, next_size) = layout::lyrics_sizes(h);
+    let y_cur = h * 0.875;
+    let y_next = h * 0.935;
+    let slide = h * 0.022;
+    let t = c.change.clamp(0.0, 1.0);
+    let line = |y: f32, s: f32| Rect::centered(w / 2.0, y, w * 0.9, s * 1.6);
+    if c.gap {
+        draw_dots(p, w / 2.0 - size * 0.65, y_cur, size, m.time, a * t);
+    } else {
+        p.text(
+            c.current,
+            &res.cover_line,
+            line(y_cur + (1.0 - t) * slide, size),
+            color(1.0, 1.0, 1.0, a * t),
+        );
+    }
+    if t < 1.0 {
+        p.text(
+            c.previous,
+            &res.cover_line,
+            line(y_cur - t * slide, size),
+            color(1.0, 1.0, 1.0, a * (1.0 - t)),
+        );
+    }
+    p.text(
+        c.next,
+        &res.cover_next,
+        line(y_next, next_size),
+        color(1.0, 1.0, 1.0, 0.45 * a * t),
+    );
+}
+
+pub fn draw(
+    ctx: &ID2D1DeviceContext,
+    res: &UiResources,
+    m: &UiModel,
+    blurred_lyrics: Option<&ID2D1CommandList>,
+) {
     let p = Painter { ctx, res };
     let (w, h) = res.size;
     let (cx, cy) = (w / 2.0, h / 2.0);
@@ -501,8 +901,8 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     // ----- player view -----
     let player_a = (1.0 - m.view) * content;
     if player_a > 0.0 {
-        p.set_transform(&scale_about(1.0 - 0.04 * m.view, cx, cy));
-        let l = res.layout;
+        p.set_transform(&player_transform(m, w, h));
+        let l = m.player;
         for t in &m.tracks {
             let a = player_a * t.alpha;
             if let Some(s) = t.small {
@@ -540,13 +940,14 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
             );
         }
         draw_buttons(&p, m, player_a);
+        draw_lyrics(&p, m, blurred_lyrics, player_a);
     }
 
     // ----- cover view -----
     let cover_a = m.view * content;
     if cover_a > 0.0 {
         p.set_transform(&scale_about(1.04 - 0.04 * m.view, cx, cy));
-        let r = layout::cover_view(w, h);
+        let r = layout::cover_view(w, h, m.cover_lyrics_mix);
         for t in &m.tracks {
             let a = cover_a * t.alpha;
             if let Some(s) = t.small {
@@ -555,6 +956,7 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
             p.cover(t.image.map(|i| i.as_ref()), r, a);
             p.rounded(r, r.w * 0.035, color(0.02, 0.02, 0.03, 0.42 * m.pause * a));
         }
+        draw_cover_lyrics(&p, m, cover_a);
     }
     p.set_transform(&scale_about(1.0, 0.0, 0.0));
 
@@ -571,7 +973,7 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
 
 fn draw_buttons(p: &Painter, m: &UiModel, alpha: f32) {
     let [ar, ag, ab] = m.accent;
-    for (bv, (_, rect)) in m.buttons.iter().zip(p.res.layout.buttons.iter()) {
+    for (bv, (_, rect)) in m.buttons.iter().zip(m.player.buttons.iter()) {
         let r = rect.scaled(1.0 - 0.08 * bv.press);
         let (cx, cy) = r.center();
         let is_play = bv.button == Button::PlayPause;

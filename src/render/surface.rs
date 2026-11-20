@@ -24,7 +24,6 @@ use windows::core::Result;
 use super::GlowParams;
 use super::gpu::Gpu;
 use super::ui::{self, UiModel, UiResources};
-use crate::ui::layout::PlayerLayout;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum FrameResult {
@@ -165,9 +164,9 @@ impl Surface {
         (self.width, self.height)
     }
 
-    /// Player layout in DIPs (for hit testing).
-    pub fn layout(&self) -> &PlayerLayout {
-        self.ui.layout()
+    /// Size in DIPs (layout and hit testing).
+    pub fn size_dip(&self) -> (f32, f32) {
+        self.ui.size()
     }
 
     /// Draws the glow frame and the UI, then presents with VSync.
@@ -200,8 +199,9 @@ impl Surface {
             ctx.PSSetConstantBuffers(0, Some(&[Some(gpu.params.clone())]));
             ctx.Draw(3, 0);
 
+            let blurred = ui::record_blurred_lyrics(&self.d2d, &self.ui, model);
             self.d2d.BeginDraw();
-            ui::draw(&self.d2d, &self.ui, model);
+            ui::draw(&self.d2d, &self.ui, model, blurred.as_ref());
             if let Err(e) = self.d2d.EndDraw(None, None) {
                 tracing::warn!(error = %e, "D2D EndDraw failed");
             }

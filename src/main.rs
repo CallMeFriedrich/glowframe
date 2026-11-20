@@ -11,6 +11,7 @@ mod fullscreen;
 mod hotkey;
 mod i18n;
 mod logging;
+mod lyrics;
 mod media;
 mod net;
 mod render;

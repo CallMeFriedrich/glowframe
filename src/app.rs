@@ -21,9 +21,11 @@ use crate::demo::Demo;
 use crate::fullscreen::{self, MonitorSignature, MonitorWindow};
 use crate::hotkey::Hotkey;
 use crate::i18n::{self, I18n};
+use crate::lyrics::lrc::{self, LineState};
+use crate::lyrics::{LyricsTracker, state_at};
 use crate::media::{Command, MediaService, MediaSnapshot, Playback, RepeatMode, Session};
 use crate::net::{NetJob, NetResult, NetWorker};
-use crate::render::ui::{ButtonView, TrackView, UiModel};
+use crate::render::ui::{ButtonView, CoverLyricsView, LyricsView, TrackView, UiModel};
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
 use crate::settings::paths::Paths;
@@ -31,7 +33,7 @@ use crate::settings::{MonitorMode, Settings};
 use crate::tray::{MenuAction, Tray};
 use crate::ui::anim::{Smooth, Toggle, ease_in_out_cubic};
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
-use crate::ui::layout::Button;
+use crate::ui::layout::{self, Button};
 
 /// Second Esc must follow within this window (SPEC §4).
 const DOUBLE_ESC: Duration = Duration::from_millis(600);
@@ -44,6 +46,11 @@ const MONITOR_POLL: Duration = Duration::from_secs(2);
 const VIEW_TRANSITION: Duration = Duration::from_millis(400);
 /// Cover crossfade on track change (SPEC §5.6).
 const TRACK_TRANSITION: f32 = 0.5;
+/// Centered <-> split player layout (SPEC §5.3).
+const LAYOUT_TRANSITION: Duration = Duration::from_millis(550);
+/// Fade/slide of the lyric line in the cover view (SPEC §5.4).
+const LINE_TRANSITION: f32 = 0.35;
+const DEMO_LYRICS: &str = include_str!("../assets/demo/lyrics.lrc");
 /// Mouse movements below this distance (physical px) are ignored.
 const MOUSE_JITTER: f64 = 2.0;
 
@@ -126,6 +133,38 @@ impl UiState {
     }
 }
 
+/// Animated lyrics presentation state.
+struct LyricsUi {
+    /// Centered (0) <-> split (1) player layout.
+    split: Toggle,
+    /// Last eased split value (hit testing between frames).
+    split_value: f32,
+    /// Lyric lines in the cover view on/off.
+    cover: Toggle,
+    /// Smoothly following line index.
+    scroll: Smooth,
+    scroll_id: u64,
+    /// Cover view line change animation.
+    line: Option<usize>,
+    prev_line: Option<usize>,
+    line_changed_at: Instant,
+}
+
+impl LyricsUi {
+    fn new(now: Instant) -> Self {
+        Self {
+            split: Toggle::new(false, LAYOUT_TRANSITION),
+            split_value: 0.0,
+            cover: Toggle::new(false, VIEW_TRANSITION),
+            scroll: Smooth::new(-1.0, 0.12),
+            scroll_id: 0,
+            line: None,
+            prev_line: None,
+            line_changed_at: now,
+        }
+    }
+}
+
 /// Per-frame UI values computed once per frame.
 struct UiFrame {
     view: f32,
@@ -133,6 +172,11 @@ struct UiFrame {
     standby: f32,
     press: [f32; 5],
     track_t: f32,
+    split: f32,
+    cover_lyrics: f32,
+    scroll: f32,
+    line_state: Option<LineState>,
+    line_change: f32,
 }
 
 pub struct App {
@@ -166,6 +210,8 @@ pub struct App {
     gpu_failed: bool,
     animator: FrameAnimator,
     ui: UiState,
+    lyrics: LyricsTracker,
+    lyrics_ui: LyricsUi,
     monitors: Option<MonitorSignature>,
     next_monitor_check: Instant,
     last_esc: Option<Instant>,
@@ -210,6 +256,8 @@ impl App {
             gpu_failed: false,
             animator: FrameAnimator::new(now),
             ui: UiState::new(now),
+            lyrics: LyricsTracker::default(),
+            lyrics_ui: LyricsUi::new(now),
             monitors: None,
             next_monitor_check: now,
             last_esc: None,
@@ -294,6 +342,7 @@ impl App {
         self.animator = FrameAnimator::new(now);
         self.animator.jump_palette(&self.target_palette());
         self.ui = UiState::new(now);
+        self.lyrics_ui = LyricsUi::new(now);
         let standby = if self.media.session.is_none() {
             1.0
         } else {
@@ -447,6 +496,7 @@ impl App {
             self.update_track(s);
         }
         self.media = snapshot;
+        self.request_lyrics(Instant::now());
         self.log_position();
     }
 
@@ -465,6 +515,14 @@ impl App {
                 album_key,
             });
             self.track_changed_at = Instant::now();
+            // No lyrics for ads (no title/artist) or when disabled (SPEC §5.6).
+            let eligible = self.settings.lyrics.enabled
+                && !s.title.trim().is_empty()
+                && !s.artist.trim().is_empty();
+            self.lyrics.track_changed(self.track_changed_at, eligible);
+            if eligible && self.demo.is_some() {
+                self.lyrics.set_found(lrc::parse(DEMO_LYRICS));
+            }
             self.request_hd(s, album_key);
             self.prune_images();
         }
@@ -545,8 +603,28 @@ impl App {
         }
     }
 
+    /// Asks LRCLIB once the new track's timeline (duration) is known.
+    fn request_lyrics(&mut self, now: Instant) {
+        let Some(request_id) = self.lyrics.due_request(now) else {
+            return;
+        };
+        let (Some(s), Some(net)) = (&self.media.session, &self.net) else {
+            return;
+        };
+        net.submit(NetJob::Lyrics {
+            request_id,
+            title: s.title.clone(),
+            artist: s.artist.clone(),
+            album: s.album.clone(),
+            duration: s.clock.duration(),
+        });
+    }
+
     fn on_net(&mut self, result: NetResult) {
         match result {
+            NetResult::Lyrics { request_id, lines } => {
+                self.lyrics.on_result(request_id, lines);
+            }
             NetResult::HdCover { album_key, bytes } => {
                 if let (Some(bytes), Some(w)) = (bytes, &self.cover_worker) {
                     w.submit_hd(album_key, bytes);
@@ -684,7 +762,10 @@ impl App {
                 .iter()
                 .find(|w| w.id() == id)
                 .and_then(|w| w.surface.as_ref())
-                .and_then(|s| s.layout().hit(x, y)),
+                .and_then(|s| {
+                    let (w, h) = s.size_dip();
+                    layout::player_mixed(w, h, self.lyrics_ui.split_value).hit(x, y)
+                }),
             _ => None,
         };
         if hover != self.ui.hover {
@@ -787,13 +868,104 @@ impl App {
                 .as_secs_f32()
                 / TRACK_TRANSITION,
         );
+
+        // ----- lyrics -----
+        self.request_lyrics(now);
+        let ls = &self.settings.lyrics;
+        let (show_player, show_cover) = (ls.enabled && ls.in_player, ls.enabled && ls.in_cover);
+        let split_target = self.lyrics.split_target(now, show_player);
+        let split = self.lyrics_ui.split.update(now, split_target);
+        self.lyrics_ui.split_value = split;
+        let found = self.lyrics.lyrics().cloned();
+        let cover_lyrics = self
+            .lyrics_ui
+            .cover
+            .update(now, show_cover && found.is_some());
+        let line_state = match (&found, &self.media.session) {
+            (Some(l), Some(s)) => {
+                let pos = s.clock.position(SystemTime::now());
+                let offset = Duration::from_millis(ls.offset_ms.unsigned_abs() as u64);
+                // Positive offset shows the lyrics earlier.
+                let pos = if ls.offset_ms >= 0 {
+                    pos + offset
+                } else {
+                    pos.saturating_sub(offset)
+                };
+                Some((l.id, state_at(&l.lines, pos)))
+            }
+            _ => None,
+        };
+        let scroll_target = line_state
+            .and_then(|(_, st)| st.current)
+            .map_or(-1.0, |i| i as f32);
+        if let Some((id, _)) = line_state
+            && id != self.lyrics_ui.scroll_id
+        {
+            // New lyrics: jump instead of scrolling through the whole text.
+            self.lyrics_ui.scroll_id = id;
+            self.lyrics_ui.scroll.set(scroll_target);
+        }
+        let scroll = self.lyrics_ui.scroll.update(now, scroll_target);
+        let current_line = line_state.and_then(|(_, st)| st.current);
+        if current_line != self.lyrics_ui.line {
+            self.lyrics_ui.prev_line = self.lyrics_ui.line;
+            self.lyrics_ui.line = current_line;
+            self.lyrics_ui.line_changed_at = now;
+        }
+        let line_change = ease_in_out_cubic(
+            now.saturating_duration_since(self.lyrics_ui.line_changed_at)
+                .as_secs_f32()
+                / LINE_TRANSITION,
+        );
+
         UiFrame {
             view,
             pause,
             standby,
             press,
             track_t,
+            split,
+            cover_lyrics,
+            scroll,
+            line_state: line_state.map(|(_, st)| st),
+            line_change,
         }
+    }
+
+    /// Lyrics views for the split player and the cover view.
+    fn lyrics_views(
+        &self,
+        frame: &UiFrame,
+    ) -> (Option<LyricsView<'_>>, Option<CoverLyricsView<'_>>) {
+        let (Some(l), Some(st)) = (self.lyrics.lyrics(), frame.line_state) else {
+            return (None, None);
+        };
+        let text = |i: Option<usize>| {
+            i.and_then(|i| l.lines.get(i))
+                .map_or("", |x| x.text.as_str())
+        };
+        // Next line with text after the current one.
+        let start = st.current.map_or(0, |i| i + 1);
+        let next = l.lines[start.min(l.lines.len())..]
+            .iter()
+            .find(|x| !x.text.is_empty())
+            .map_or("", |x| x.text.as_str());
+        let player = LyricsView {
+            id: l.id,
+            lines: &l.lines,
+            scroll: frame.scroll,
+            gap: st.gap,
+            alpha: frame.split,
+        };
+        let cover = CoverLyricsView {
+            current: text(st.current),
+            next,
+            previous: text(self.lyrics_ui.prev_line),
+            change: frame.line_change,
+            gap: st.gap,
+            alpha: frame.cover_lyrics,
+        };
+        (Some(player), Some(cover))
     }
 
     fn track_view<'a>(&'a self, t: &'a TrackDisplay, alpha: f32) -> TrackView<'a> {
@@ -835,12 +1007,12 @@ impl App {
         }
         let frame = self.ui_tick(now);
 
-        let Some(size) = self
+        let Some((size, size_dip)) = self
             .windows
             .iter()
             .find(|w| w.id() == id)
             .and_then(|w| w.surface.as_ref())
-            .map(Surface::size)
+            .map(|s| (s.size(), s.size_dip()))
         else {
             return;
         };
@@ -861,7 +1033,15 @@ impl App {
         if let Some(c) = &self.current {
             tracks.push(self.track_view(c, frame.track_t));
         }
+        let (lyrics, cover_lyrics) = self.lyrics_views(&frame);
         let model = UiModel {
+            time: now
+                .saturating_duration_since(self.track_changed_at)
+                .as_secs_f32(),
+            player: layout::player_mixed(size_dip.0, size_dip.1, frame.split),
+            lyrics,
+            cover_lyrics,
+            cover_lyrics_mix: frame.cover_lyrics,
             view: frame.view,
             standby: frame.standby,
             pause: frame.pause,
