@@ -4,7 +4,7 @@ A native Windows fullscreen "now playing" mode for Spotify: a glowing comet in
 your cover's colors travels around the edge of the screen and pulses to the
 beat, with a player view, a large cover view and line-synced lyrics.
 
-![Glowframe in demo mode: player view with lyrics and the glowing frame](docs/screenshot.png)
+![Glowframe in demo mode: player view with lyrics and the glowing frame](docs/glowframe-demo.png)
 
 *Demo mode with a self-made cover and lyrics.*
 
