@@ -18,7 +18,8 @@ beat, with a player view, a large cover view and line-synced lyrics.
   play/pause, next, repeat).
 - **Clock:** date and time at the top in a lock screen style (can be turned off)
 - **Lyrics focus view:** large cover on the left, lyrics on the right; while
-  idle it alternates with the cover view every few minutes
+  idle, it or the cover view is picked at random, then they alternate every
+  few minutes
 - **Cover view:** after a few seconds without mouse movement the cover is shown
   large, with the current lyric line underneath.
 - **Synced lyrics:** line by line from [LRCLIB](https://lrclib.net), Apple
