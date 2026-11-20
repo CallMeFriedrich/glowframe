@@ -157,6 +157,25 @@ pub fn paint_black(window: &Window) {
     }
 }
 
+/// Returns idle memory pages to Windows after GPU/OpenGL use. The graphics
+/// drivers stay loaded once used and keep their heaps; trimming moves these
+/// rarely touched pages out of the working set (they are paged back in on
+/// access).
+pub fn trim_working_set() {
+    // SAFETY: (-1, -1) is the documented "trim" request for the own process.
+    let r = unsafe {
+        windows::Win32::System::Threading::SetProcessWorkingSetSize(
+            windows::Win32::System::Threading::GetCurrentProcess(),
+            usize::MAX,
+            usize::MAX,
+        )
+    };
+    match r {
+        Ok(()) => tracing::debug!("working set trimmed"),
+        Err(e) => tracing::debug!(error = %e, "working set trim failed"),
+    }
+}
+
 /// Prevents screensaver and display sleep while the mode is active.
 pub fn keep_awake(on: bool) {
     let flags = if on {

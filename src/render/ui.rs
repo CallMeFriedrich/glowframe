@@ -2,6 +2,7 @@
 //! player view, lyrics, cover view, standby screen, pause state, Esc hint.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -15,19 +16,20 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, D2D1_INTERPOLATION_MODE_LINEAR,
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_OPACITY_PROP_OPACITY, D2D1_PROPERTY_TYPE_FLOAT,
     D2D1_PROPERTY_TYPE_VECTOR2, D2D1_ROUNDED_RECT, D2D1_SCALE_PROP_SCALE, ID2D1Bitmap1,
-    ID2D1CommandList, ID2D1DeviceContext, ID2D1Effect, ID2D1RenderTarget, ID2D1SolidColorBrush,
+    ID2D1BitmapBrush1, ID2D1DeviceContext, ID2D1Effect, ID2D1LinearGradientBrush,
+    ID2D1RenderTarget, ID2D1SolidColorBrush,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT,
     DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-    DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-    DWRITE_PARAGRAPH_ALIGNMENT_FAR, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER,
-    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_METRICS, DWRITE_TRIMMING,
-    DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP, DWRITE_WORD_WRAPPING_WRAP,
-    IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat, IDWriteTextLayout,
+    DWRITE_PARAGRAPH_ALIGNMENT, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_FAR,
+    DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
+    DWRITE_TEXT_METRICS, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+    DWRITE_WORD_WRAPPING_NO_WRAP, DWRITE_WORD_WRAPPING_WRAP, IDWriteFactory, IDWriteFontCollection,
+    IDWriteTextFormat, IDWriteTextLayout,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
-use windows::core::{BOOL, HSTRING, Result};
+use windows::core::{BOOL, HSTRING, Interface, Result};
 use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::cover::Image;
@@ -42,6 +44,16 @@ const GLYPH_SHUFFLE: char = '\u{E8B1}';
 const GLYPH_REPEAT_ALL: char = '\u{E8EE}';
 const GLYPH_REPEAT_ONE: char = '\u{E8ED}';
 const MAX_CACHED_BITMAPS: usize = 6;
+/// Text layouts kept per surface (titles, icons, lyric lines in the cover view).
+const MAX_CACHED_LAYOUTS: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TextKey {
+    text: String,
+    format: usize,
+    w: i32,
+    h: i32,
+}
 
 pub struct TrackView<'a> {
     pub title: &'a str,
@@ -130,8 +142,6 @@ pub struct UiResources {
     cover_line: IDWriteTextFormat,
     cover_next: IDWriteTextFormat,
     lyric_layouts: RefCell<Option<LyricLayouts>>,
-    text_blur: ID2D1Effect,
-    text_opacity: ID2D1Effect,
     /// Effects work in pixels for 96-DPI bitmap inputs, positions in DIPs.
     dpi_scale: f32,
     title: IDWriteTextFormat,
@@ -146,6 +156,9 @@ pub struct UiResources {
     blur: ID2D1Effect,
     opacity: ID2D1Effect,
     bitmaps: RefCell<Vec<(u64, ID2D1Bitmap1)>>,
+    brushes: RefCell<Vec<(u64, ID2D1BitmapBrush1)>>,
+    text_layouts: RefCell<HashMap<TextKey, IDWriteTextLayout>>,
+    gradient: RefCell<Option<ID2D1LinearGradientBrush>>,
 }
 
 impl UiResources {
@@ -172,9 +185,6 @@ impl UiResources {
             let opacity = ctx.CreateEffect(&CLSID_D2D1Opacity)?;
             blur.SetInput(0, &scale.GetOutput()?, false);
             opacity.SetInput(0, &blur.GetOutput()?, false);
-            let text_blur = ctx.CreateEffect(&CLSID_D2D1GaussianBlur)?;
-            let text_opacity = ctx.CreateEffect(&CLSID_D2D1Opacity)?;
-            text_opacity.SetInput(0, &text_blur.GetOutput()?, false);
             let lyric = fmt(
                 &ui_font,
                 DWRITE_FONT_WEIGHT_BOLD,
@@ -204,8 +214,6 @@ impl UiResources {
                     false,
                 )?,
                 lyric_layouts: RefCell::new(None),
-                text_blur,
-                text_opacity,
                 dpi_scale,
                 title: fmt(
                     &ui_font,
@@ -261,6 +269,9 @@ impl UiResources {
                 blur,
                 opacity,
                 bitmaps: RefCell::new(Vec::new()),
+                brushes: RefCell::new(Vec::new()),
+                text_layouts: RefCell::new(HashMap::new()),
+                gradient: RefCell::new(None),
             })
         }
     }
@@ -308,6 +319,91 @@ impl UiResources {
             *cache = Some(LyricLayouts { id: view.id, lines });
         }
         f(cache.as_ref().map_or(&[], |c| c.lines.as_slice()))
+    }
+
+    /// Cached text layout for a string in a box of `w` x `h` DIPs.
+    fn text_layout(
+        &self,
+        s: &str,
+        format: &IDWriteTextFormat,
+        w: f32,
+        h: f32,
+    ) -> Option<IDWriteTextLayout> {
+        let key = TextKey {
+            text: s.to_string(),
+            format: format.as_raw() as usize,
+            w: w.round() as i32,
+            h: h.round() as i32,
+        };
+        let mut cache = self.text_layouts.borrow_mut();
+        if let Some(l) = cache.get(&key) {
+            return Some(l.clone());
+        }
+        if cache.len() >= MAX_CACHED_LAYOUTS {
+            cache.clear();
+        }
+        let wide: Vec<u16> = s.encode_utf16().collect();
+        // SAFETY: DirectWrite layout creation with a valid format.
+        let layout = unsafe {
+            self.dwrite
+                .CreateTextLayout(&wide, format, w.max(1.0), h.max(1.0))
+        }
+        .ok()?;
+        cache.insert(key, layout.clone());
+        Some(layout)
+    }
+
+    /// Bitmap brush for an image, created once per image.
+    fn bitmap_brush(&self, ctx: &ID2D1DeviceContext, img: &Image) -> Option<ID2D1BitmapBrush1> {
+        if let Some((_, b)) = self.brushes.borrow().iter().find(|(id, _)| *id == img.id) {
+            return Some(b.clone());
+        }
+        let bmp = self.bitmap(ctx, img)?;
+        let props = D2D1_BITMAP_BRUSH_PROPERTIES1 {
+            extendModeX: D2D1_EXTEND_MODE_CLAMP,
+            extendModeY: D2D1_EXTEND_MODE_CLAMP,
+            interpolationMode: D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+        };
+        // SAFETY: brush creation on a valid context.
+        let brush = unsafe { ctx.CreateBitmapBrush(&bmp, Some(&props), None) }.ok()?;
+        let mut cache = self.brushes.borrow_mut();
+        if cache.len() >= MAX_CACHED_BITMAPS {
+            cache.remove(0);
+        }
+        cache.push((img.id, brush.clone()));
+        Some(brush)
+    }
+
+    /// Vertical transparent -> black gradient for the bottom 30 % (created once).
+    fn bottom_gradient(&self, ctx: &ID2D1DeviceContext) -> Option<ID2D1LinearGradientBrush> {
+        if let Some(b) = self.gradient.borrow().as_ref() {
+            return Some(b.clone());
+        }
+        let h = self.size.1;
+        let stops = [
+            D2D1_GRADIENT_STOP {
+                position: 0.0,
+                color: color(0.0, 0.0, 0.0, 0.0),
+            },
+            D2D1_GRADIENT_STOP {
+                position: 1.0,
+                color: color(0.0, 0.0, 0.0, 0.8),
+            },
+        ];
+        let rt: &ID2D1RenderTarget = ctx;
+        let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+            startPoint: Vector2 { X: 0.0, Y: h * 0.7 },
+            endPoint: Vector2 { X: 0.0, Y: h },
+        };
+        // SAFETY: resource creation on a valid context.
+        let brush = unsafe {
+            let coll = rt
+                .CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
+                .ok()?;
+            ctx.CreateLinearGradientBrush(&props, None, &coll).ok()?
+        };
+        *self.gradient.borrow_mut() = Some(brush.clone());
+        Some(brush)
     }
 
     /// Uploads an image once and caches the bitmap (by image id).
@@ -447,21 +543,23 @@ impl Painter<'_> {
         unsafe { self.res.brush.SetColor(&c) };
     }
 
+    /// Draws text in a box. Layouts are cached (per string, format and box
+    /// size) because creating them every frame dominated the CPU time.
     fn text(&self, s: &str, format: &IDWriteTextFormat, r: Rect, c: D2D1_COLOR_F) {
         if c.a <= 0.0 || s.is_empty() {
             return;
         }
-        let wide: Vec<u16> = s.encode_utf16().collect();
+        let Some(layout) = self.res.text_layout(s, format, r.w, r.h) else {
+            return;
+        };
         self.fill_color(c);
         // SAFETY: called between BeginDraw/EndDraw.
         unsafe {
-            self.ctx.DrawText(
-                &wide,
-                format,
-                &d2d_rect(r),
+            self.ctx.DrawTextLayout(
+                Vector2 { X: r.x, Y: r.y },
+                &layout,
                 &self.res.brush,
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
             );
         }
     }
@@ -555,19 +653,11 @@ impl Painter<'_> {
             self.rounded(r, radius, color(1.0, 1.0, 1.0, 0.06 * alpha));
             return;
         };
-        let Some(bmp) = self.res.bitmap(self.ctx, img) else {
+        let Some(brush) = self.res.bitmap_brush(self.ctx, img) else {
             return;
         };
-        let props = D2D1_BITMAP_BRUSH_PROPERTIES1 {
-            extendModeX: D2D1_EXTEND_MODE_CLAMP,
-            extendModeY: D2D1_EXTEND_MODE_CLAMP,
-            interpolationMode: D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
-        };
-        // SAFETY: called between BeginDraw/EndDraw; brush is local.
+        // SAFETY: called between BeginDraw/EndDraw.
         unsafe {
-            let Ok(brush) = self.ctx.CreateBitmapBrush(&bmp, Some(&props), None) else {
-                return;
-            };
             brush.SetTransform(&Matrix3x2 {
                 M11: r.w / img.width as f32,
                 M12: 0.0,
@@ -616,7 +706,7 @@ struct LineGeo {
     y: f32,
     scale: f32,
     alpha: f32,
-    /// Close to the current position: drawn sharp, otherwise blurred.
+    /// Close to the current position: drawn sharp, otherwise softened.
     sharp: bool,
 }
 
@@ -706,35 +796,25 @@ fn draw_line(
     }
 }
 
-/// Pre-pass (outside the main BeginDraw): records the lines away from the
-/// current one into a command list, which the main pass draws blurred.
-pub fn record_blurred_lyrics(
+/// Slightly soft line: four sub-pixel offset copies at reduced opacity.
+/// Replaces a Gaussian blur effect, whose 4K intermediate surfaces cost
+/// ~33 MB RAM and noticeable CPU per frame (phase 9 measurement).
+fn draw_soft_line(
     ctx: &ID2D1DeviceContext,
     res: &UiResources,
-    m: &UiModel,
-) -> Option<ID2D1CommandList> {
-    let v = m.lyrics.as_ref()?;
-    if v.alpha * (1.0 - m.view) * (1.0 - m.standby) <= 0.0 {
-        return None;
-    }
-    let identity = scale_about(1.0, 0.0, 0.0);
-    // SAFETY: the original target is restored before returning.
-    unsafe {
-        let list = ctx.CreateCommandList().ok()?;
-        let old = ctx.GetTarget().ok();
-        ctx.SetTarget(&list);
-        ctx.BeginDraw();
-        ctx.SetTransform(&identity);
-        for_each_line(res, v, |tl, g| {
-            if !g.sharp {
-                draw_line(ctx, res, &identity, tl, g, g.alpha);
-            }
-        });
-        let ok = ctx.EndDraw(None, None).is_ok() && list.Close().is_ok();
-        if let Some(old) = old {
-            ctx.SetTarget(&old);
-        }
-        ok.then_some(list)
+    base: &Matrix3x2,
+    tl: &IDWriteTextLayout,
+    g: LineGeo,
+    alpha: f32,
+) {
+    let d = 0.9 * g.scale;
+    for (dx, dy) in [(-d, -d * 0.4), (d, d * 0.4), (-d * 0.4, d), (d * 0.4, -d)] {
+        let shifted = LineGeo {
+            x: g.x + dx,
+            y: g.y + dy,
+            ..g
+        };
+        draw_line(ctx, res, base, tl, shifted, alpha * 0.34);
     }
 }
 
@@ -754,7 +834,7 @@ fn draw_dots(p: &Painter, x: f32, cy: f32, size: f32, time: f32, alpha: f32) {
 }
 
 /// Lyrics in the split player view (inside the player transform).
-fn draw_lyrics(p: &Painter, m: &UiModel, blurred: Option<&ID2D1CommandList>, alpha: f32) {
+fn draw_lyrics(p: &Painter, m: &UiModel, alpha: f32) {
     let Some(v) = &m.lyrics else { return };
     let a = v.alpha * alpha;
     if a <= 0.0 {
@@ -763,35 +843,11 @@ fn draw_lyrics(p: &Painter, m: &UiModel, blurred: Option<&ID2D1CommandList>, alp
     let res = p.res;
     let (w, h) = res.size;
     let base = player_transform(m, w, h);
-    if let Some(list) = blurred {
-        // SAFETY: effect property writes with matching types; drawing between
-        // BeginDraw/EndDraw.
-        unsafe {
-            res.text_blur.SetInput(0, list, false);
-            let _ = res.text_blur.SetValue(
-                D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION.0 as u32,
-                D2D1_PROPERTY_TYPE_FLOAT,
-                &(1.3 * res.dpi_scale).to_le_bytes(),
-            );
-            let _ = res.text_opacity.SetValue(
-                D2D1_OPACITY_PROP_OPACITY.0 as u32,
-                D2D1_PROPERTY_TYPE_FLOAT,
-                &a.clamp(0.0, 1.0).to_le_bytes(),
-            );
-            if let Ok(out) = res.text_opacity.GetOutput() {
-                p.ctx.DrawImage(
-                    &out,
-                    None,
-                    None,
-                    D2D1_INTERPOLATION_MODE_LINEAR,
-                    D2D1_COMPOSITE_MODE_SOURCE_OVER,
-                );
-            }
-        }
-    }
     for_each_line(res, v, |tl, g| {
         if g.sharp {
             draw_line(p.ctx, res, &base, tl, g, g.alpha * a);
+        } else {
+            draw_soft_line(p.ctx, res, &base, tl, g, g.alpha * a);
         }
     });
     if v.gap {
@@ -810,31 +866,13 @@ fn draw_cover_lyrics(p: &Painter, m: &UiModel, alpha: f32) {
     }
     let res = p.res;
     let (w, h) = res.size;
-    // Subtle gradient towards black for readability.
-    // SAFETY: local brush resources, drawing between BeginDraw/EndDraw.
-    unsafe {
-        let stops = [
-            D2D1_GRADIENT_STOP {
-                position: 0.0,
-                color: color(0.0, 0.0, 0.0, 0.0),
-            },
-            D2D1_GRADIENT_STOP {
-                position: 1.0,
-                color: color(0.0, 0.0, 0.0, 0.8 * a),
-            },
-        ];
-        let rt: &ID2D1RenderTarget = p.ctx;
-        if let Ok(coll) =
-            rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
-        {
-            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
-                startPoint: Vector2 { X: 0.0, Y: h * 0.7 },
-                endPoint: Vector2 { X: 0.0, Y: h },
-            };
-            if let Ok(brush) = p.ctx.CreateLinearGradientBrush(&props, None, &coll) {
-                p.ctx
-                    .FillRectangle(&d2d_rect(Rect::new(0.0, h * 0.7, w, h * 0.3)), &brush);
-            }
+    // Subtle gradient towards black for readability (brush created once).
+    if let Some(brush) = res.bottom_gradient(p.ctx) {
+        // SAFETY: drawing between BeginDraw/EndDraw.
+        unsafe {
+            brush.SetOpacity(a);
+            p.ctx
+                .FillRectangle(&d2d_rect(Rect::new(0.0, h * 0.7, w, h * 0.3)), &brush);
         }
     }
     let (_, size, next_size) = layout::lyrics_sizes(h);
@@ -869,12 +907,7 @@ fn draw_cover_lyrics(p: &Painter, m: &UiModel, alpha: f32) {
     );
 }
 
-pub fn draw(
-    ctx: &ID2D1DeviceContext,
-    res: &UiResources,
-    m: &UiModel,
-    blurred_lyrics: Option<&ID2D1CommandList>,
-) {
+pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     let p = Painter { ctx, res };
     let (w, h) = res.size;
     let (cx, cy) = (w / 2.0, h / 2.0);
@@ -940,7 +973,7 @@ pub fn draw(
             );
         }
         draw_buttons(&p, m, player_a);
-        draw_lyrics(&p, m, blurred_lyrics, player_a);
+        draw_lyrics(&p, m, player_a);
     }
 
     // ----- cover view -----

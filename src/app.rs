@@ -55,6 +55,8 @@ const LINE_TRANSITION: f32 = 0.35;
 const DEMO_LYRICS: &str = include_str!("../assets/demo/lyrics.lrc");
 /// Settings are written this long after the last change (slider drags).
 const SAVE_DELAY: Duration = Duration::from_millis(600);
+/// Delay before trimming the working set (driver cleanup finishes first).
+const TRIM_DELAY: Duration = Duration::from_millis(1500);
 
 /// Monitors for the settings list, left to right.
 fn monitor_infos(event_loop: &ActiveEventLoop) -> Vec<MonitorInfo> {
@@ -225,6 +227,9 @@ pub struct App {
     settings_monitors: Vec<MonitorInfo>,
     /// Pending debounced save.
     save_due: Option<Instant>,
+    /// Pending working set trim after leaving the fullscreen mode or closing
+    /// the settings window (GPU/OpenGL driver memory, SPEC §3 idle target).
+    trim_due: Option<Instant>,
     paths: Paths,
     settings: Settings,
     i18n: I18n,
@@ -276,6 +281,7 @@ impl App {
             settings_window: None,
             settings_monitors: Vec::new(),
             save_due: None,
+            trim_due: None,
             paths,
             settings,
             i18n,
@@ -408,6 +414,7 @@ impl App {
         self.gpu = None;
         self.monitors = None;
         fullscreen::keep_awake(false);
+        self.trim_due = Some(Instant::now() + TRIM_DELAY);
         if let Some(t) = self.tray.as_mut() {
             t.set_active(false, &self.i18n);
         }
@@ -519,13 +526,24 @@ impl App {
                 tracing::info!("settings window opened");
                 self.settings_window = Some(sw);
             }
-            Err(e) => tracing::error!(error = %e, "settings window unavailable"),
+            Err(e) => {
+                // E.g. remote desktop or a VM without OpenGL 2.0 driver.
+                tracing::error!(error = %e, "settings window unavailable");
+                if let Some(tray) = &self.tray {
+                    let path = self.paths.settings_file().display().to_string();
+                    tray.notify(
+                        self.i18n.t("notify.settings_failed_title"),
+                        &self.i18n.tf("notify.settings_failed", &[("path", &path)]),
+                    );
+                }
+            }
         }
     }
 
     fn close_settings(&mut self) {
         if let Some(sw) = self.settings_window.take() {
             drop(sw);
+            self.trim_due = Some(Instant::now() + TRIM_DELAY);
             tracing::info!("settings window closed");
             // A hotkey recording in progress is abandoned.
             self.register_hotkey();
@@ -1380,6 +1398,12 @@ impl ApplicationHandler<UserEvent> for App {
         if self.save_due.is_some_and(|t| now >= t) {
             self.save_settings_now();
         }
+        if self.trim_due.is_some_and(|t| now >= t) {
+            self.trim_due = None;
+            if self.mode == Mode::Idle && self.settings_window.is_none() {
+                fullscreen::trim_working_set();
+            }
+        }
         let repaint = self.settings_window.as_ref().and_then(|sw| sw.repaint_at());
         if let Some(sw) = &self.settings_window
             && repaint.is_some_and(|t| now >= t)
@@ -1389,6 +1413,7 @@ impl ApplicationHandler<UserEvent> for App {
         let deadlines = [
             (self.mode == Mode::Active).then_some(self.next_monitor_check),
             self.save_due,
+            self.trim_due,
             repaint.filter(|t| *t > now),
         ];
         match deadlines.into_iter().flatten().min() {

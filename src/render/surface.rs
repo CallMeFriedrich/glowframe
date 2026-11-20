@@ -199,9 +199,8 @@ impl Surface {
             ctx.PSSetConstantBuffers(0, Some(&[Some(gpu.params.clone())]));
             ctx.Draw(3, 0);
 
-            let blurred = ui::record_blurred_lyrics(&self.d2d, &self.ui, model);
             self.d2d.BeginDraw();
-            ui::draw(&self.d2d, &self.ui, model, blurred.as_ref());
+            ui::draw(&self.d2d, &self.ui, model);
             if let Err(e) = self.d2d.EndDraw(None, None) {
                 tracing::warn!(error = %e, "D2D EndDraw failed");
             }

@@ -53,3 +53,5 @@ hd_cover = "Load HD covers"
 [notify]
 hotkey_failed_title = "Hotkey unavailable"
 hotkey_failed = "{hotkey} is already in use. Please choose another combination in the settings."
+settings_failed_title = "Settings unavailable"
+settings_failed = "The window needs OpenGL 2.0 (graphics driver). The settings are stored in {path}."

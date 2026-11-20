@@ -53,3 +53,5 @@ hd_cover = "HD-Cover laden"
 [notify]
 hotkey_failed_title = "Hotkey nicht verfügbar"
 hotkey_failed = "{hotkey} ist bereits belegt. Bitte in den Einstellungen eine andere Kombination wählen."
+settings_failed_title = "Einstellungen nicht verfügbar"
+settings_failed = "Das Fenster braucht OpenGL 2.0 (Grafiktreiber). Die Einstellungen liegen in {path}."
