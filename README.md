@@ -11,7 +11,8 @@ beat, with a player view, a large cover view and line-synced lyrics.
 ## Features
 
 - **Glowing frame:** a comet of light travels clockwise around the screen
-  border in the colors of the current cover and pulses with the beat.
+  border in the colors of the current cover and pulses with the beat. Covers
+  with several dominant colors get one comet per color.
 - **Beat detection:** analyzes only Spotify's audio (Windows process loopback),
   so system sounds, Discord etc. do not trigger it.
 - **Player view:** cover, title, artist and controls (shuffle, previous,
