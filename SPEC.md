@@ -78,7 +78,7 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 ## 5. Vollbild-Modus
 
 ### 5.1 Monitore
-- **Fenster:** pro Monitor ein randloses Fenster (`WS_POPUP`, `WS_EX_TOPMOST`, `WS_EX_TOOLWINDOW`, also ohne Taskleisteneintrag), das exakt den Monitor abdeckt. DPI-Awareness: Per-Monitor v2.
+- **Fenster:** pro Monitor ein randloses Fenster (`WS_POPUP`, `WS_EX_TOPMOST`, `WS_EX_TOOLWINDOW`, also ohne Taskleisteneintrag), das exakt den Monitor abdeckt. DPI-Awareness: Per-Monitor v2. Stil und Monitorrechteck werden selbst gesetzt und bei jeder Größen-, Positions- oder DPI-Änderung wiederhergestellt; Fenster werden erst sichtbar, wenn sie schwarz gemalt bzw. gerendert sind.
 - **Modus pro Monitor** (Einstellung):
   - **Animation:** Rahmen und Player/Cover
   - **Schwarz**
@@ -96,6 +96,8 @@ Es gibt zwei Ansichten:
 - **Cover-Ansicht:** erscheint, wenn die Maus *N* Sekunden ruht (Einstellung, Standard 5 s).
 
 Der Übergang ist ein weicher Crossfade mit leichtem Scale, etwa 400 ms, mit Easing.
+
+**Bewegungsphysik (v1.1):** Alle Übergänge der Oberfläche laufen über gedämpfte Federn wie bei iOS (Parameter „response“ und „Dämpfung“): schneller Ansatz, weiches Ausschwingen, bei Skalierungen ein minimales Überschwingen. Das gilt für Ansichtswechsel, Layoutwechsel zentriert ↔ geteilt, Cover-Überblendung beim Trackwechsel (neues Cover skaliert leicht herein), Lyrics-Scrollen und Zeilenwechsel, Pause/Standby-Überblendung, Button-Feedback und den Start des Modus (Inhalt und Rahmen blenden mit leichtem Scale ein).
 
 ### 5.3 Player-Ansicht
 Orientiert sich am zweiten Screenshot.
@@ -130,11 +132,12 @@ Orientiert sich am ersten Screenshot.
 
 ### 5.5 Leuchtrahmen
 - **Form:** Er folgt dem rechteckigen Bildschirmrand mit leicht abgerundeten Ecken und leuchtet weich nach innen aus (Glow-Falloff, keine harte Linie).
-- **Rotation:** Ein Lichtbogen mit weich auslaufenden Enden bedeckt etwa **60 %** des Umfangs und **wandert um den Monitor**.
-  - **Geschwindigkeit:** über die Perimeter-Koordinate gleichmäßig, damit es an den Ecken nicht ruckelt.
-  - **Grundglühen:** Auf dem restlichen Umfang bleibt ein schwaches Glühen (etwa 15 %), damit der Rahmen nie ganz dunkel ist.
+- **Rotation (v1.1, „Komet“):** Ein heller, kompakter **Kopf** (~12 % des Umfangs, weicher Vorlauf) zieht einen weich auslaufenden **Schweif** (~30 % des Umfangs) hinter sich her und **wandert im Uhrzeigersinn um den Monitor**: Start unten links, den linken Rand hoch, oben entlang, rechts hinunter, unten zurück.
+  - **Geschwindigkeit:** über die Perimeter-Koordinate gleichmäßig, damit es an den Ecken nicht ruckelt. Beim Start des Modus beschleunigt der Komet per Feder aus dem Stand.
+  - **Grundglühen:** Auf dem restlichen Umfang bleibt ein schwaches Glühen (etwa 5 %), damit der Rahmen nie ganz dunkel ist, die Bewegung aber auch bei einfarbigen Covern klar sichtbar bleibt.
+  - *Vorher (v1.0):* Bogen über ~60 % mit 15 % Grundglühen; bei einfarbigen Covern war kaum Bewegung zu sehen.
 - **Farben:**
-  - **Farbmodus Cover:** 2–3 Farben aus dem Cover, als Verlauf entlang des Bogens.
+  - **Farbmodus Cover:** 2–3 Farben aus dem Cover, als Verlauf vom Kopf zum Schweifende.
   - **Farbmodus Feste Palette:** Preset oder eigene Farben.
 - **Beat:**
   - **Bei jedem erkannten Beat:** Helligkeit und Breite pulsieren kurz (Attack ~10 ms, Decay ~180 ms).

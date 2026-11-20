@@ -1,20 +1,33 @@
-//! Glow frame animation state (SPEC §5.5, §5.6): rotation phase with smooth
-//! speed changes, breathing in pause/standby, beat envelope and OKLab palette
-//! transitions. Produces the shader parameters per frame.
+//! Glow frame animation state (SPEC §5.5, §5.6): a comet travelling clockwise
+//! around the screen (start bottom left), spring-driven speed, brightness and
+//! breathing, beat envelope and OKLab palette transitions. Produces the shader
+//! parameters per frame.
 
 use std::time::{Duration, Instant};
 
 use crate::color::Oklab;
 use crate::render::GlowParams;
 use crate::settings::model::{FALLBACK_PALETTE, FrameSettings, PalettePreset, Rgb};
+use crate::ui::anim::Spring;
 
 /// Rotation speed at 100 %: 40 % equals one lap per 12 s (SPEC §7).
 const LAPS_PER_SEC_AT_100: f64 = 1.0 / 12.0 / 0.4;
 const PALETTE_TRANSITION: Duration = Duration::from_millis(1500);
-/// Time constant for speed/breathing/beat blending (~1 s to settle).
-const SMOOTHING_TAU: f32 = 0.33;
-const BASE_LEVEL: f32 = 0.15;
-const ARC_LEN: f32 = 0.6;
+/// Faint glow on the rest of the border (SPEC §5.5 v1.1).
+const BASE_LEVEL: f32 = 0.05;
+/// Comet shape in fractions of the perimeter: bright head (~12 % incl. its
+/// soft flanks), soft leading edge, tail fading over ~30 %.
+const HEAD_LEN: f32 = 0.05;
+const LEAD_LEN: f32 = 0.022;
+const TAIL_LEN: f32 = 0.32;
+
+/// Perimeter coordinate (clockwise from top center, as in glow.hlsl) of the
+/// bottom-left corner, where the comet starts.
+pub fn start_phase(width: f32, height: f32) -> f32 {
+    let (w, h) = (width.max(1.0), height.max(1.0));
+    // top-center -> top-right (w/2) -> right edge (h) -> bottom edge (w)
+    ((0.5 * w + h + w) / (2.0 * (w + h))).fract()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameState {
@@ -82,10 +95,15 @@ pub fn to_stops(colors: &[Oklab]) -> [Oklab; 3] {
 pub struct FrameAnimator {
     start: Instant,
     last: Option<Instant>,
-    phase: f64,
-    speed: f32,
-    breath: f32,
-    beat_weight: f32,
+    /// Head position on the perimeter; `None` until the size is known.
+    phase: Option<f64>,
+    /// Speed factor (playing 1, paused 0.1, standby 0.3); starts at rest so
+    /// the comet launches from the bottom-left corner.
+    speed: Spring,
+    breath: Spring,
+    beat_weight: Spring,
+    /// Fade-in of the whole frame when the mode starts.
+    intro: Spring,
     from: [Oklab; 3],
     to: [Oklab; 3],
     transition_start: Option<Instant>,
@@ -107,10 +125,13 @@ impl FrameAnimator {
         Self {
             start: now,
             last: None,
-            phase: 0.0,
-            speed: 1.0,
-            breath: 0.0,
-            beat_weight: 1.0,
+            phase: None,
+            // Critically damped: no oscillation in speed or brightness. The
+            // pause slow-down takes ~1 s (SPEC §5.6).
+            speed: Spring::smooth(0.0, 1.6),
+            breath: Spring::smooth(0.0, 1.1),
+            beat_weight: Spring::smooth(1.0, 0.5),
+            intro: Spring::smooth(0.0, 1.2),
             from: stops,
             to: stops,
             transition_start: None,
@@ -163,23 +184,33 @@ impl FrameAnimator {
             .map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32())
             .min(0.1);
         self.last = Some(now);
-        let k = 1.0 - (-dt / SMOOTHING_TAU).exp();
 
         let s = input.settings;
         let playing = input.state == FrameState::Playing;
-        self.speed += (input.state.speed_factor() - self.speed) * k;
-        self.breath += (if playing { 0.0 } else { 1.0 } - self.breath) * k;
-        self.beat_weight += (if playing { 1.0 } else { 0.0 } - self.beat_weight) * k;
+        let speed = self.speed.update(now, input.state.speed_factor()).max(0.0);
+        let breath = self
+            .breath
+            .update(now, if playing { 0.0 } else { 1.0 })
+            .clamp(0.0, 1.0);
+        let beat_weight = self
+            .beat_weight
+            .update(now, if playing { 1.0 } else { 0.0 })
+            .clamp(0.0, 1.0);
+        let intro = self.intro.update(now, 1.0).clamp(0.0, 1.0);
 
         let laps_per_sec = s.speed as f64 / 100.0 * LAPS_PER_SEC_AT_100;
-        self.phase = (self.phase + dt as f64 * laps_per_sec * self.speed as f64).fract();
+        let phase = self
+            .phase
+            .unwrap_or_else(|| start_phase(width as f32, height as f32) as f64);
+        let phase = (phase + dt as f64 * laps_per_sec * speed as f64).fract();
+        self.phase = Some(phase);
 
         let time = now.saturating_duration_since(self.start).as_secs_f32();
         // Breathing: ~0.2 Hz between 20 and 40 % brightness.
         let breathing = 0.3 + 0.1 * (std::f32::consts::TAU * 0.2 * time).sin();
-        let level = 1.0 + (breathing - 1.0) * self.breath;
+        let level = (1.0 + (breathing - 1.0) * breath) * intro;
 
-        let beat_amount = s.beat as f32 / 100.0 * self.beat_weight;
+        let beat_amount = s.beat as f32 / 100.0 * beat_weight;
         let beat = input.since_beat.map_or(0.0, beat_envelope) * beat_amount;
         let energy = 0.5 + (input.energy.clamp(0.0, 1.0) - 0.5) * beat_amount;
 
@@ -193,7 +224,7 @@ impl FrameAnimator {
         GlowParams {
             size: [width as f32, h],
             time,
-            phase: self.phase as f32,
+            phase: phase as f32,
             c0: lin(stops[0]),
             c1: lin(stops[1]),
             c2: lin(stops[2]),
@@ -203,8 +234,11 @@ impl FrameAnimator {
             energy,
             corner: h * 0.012,
             base_level: BASE_LEVEL,
-            arc_len: ARC_LEN,
+            tail_len: TAIL_LEN,
             dither_seed: (time * 7.13).fract(),
+            head_len: HEAD_LEN,
+            lead_len: LEAD_LEN,
+            _pad: [0.0; 2],
         }
     }
 }
@@ -230,22 +264,45 @@ mod tests {
         assert!(beat_envelope(0.19) < 0.1);
     }
 
+    /// Runs `secs` seconds in 10 ms steps and returns the last parameters.
+    fn run(
+        a: &mut FrameAnimator,
+        t0: Instant,
+        from_ms: u64,
+        secs: u64,
+        i: &FrameInputs,
+    ) -> GlowParams {
+        let mut p = GlowParams::default();
+        for k in 0..=secs * 100 {
+            p = a.update(t0 + Duration::from_millis(from_ms + k * 10), i, 1920, 1080);
+        }
+        p
+    }
+
     #[test]
-    fn rotation_speed_matches_spec() {
+    fn comet_starts_bottom_left() {
+        // Square: corners at 1/8, 3/8, 5/8, 7/8 from top center.
+        assert!((start_phase(100.0, 100.0) - 0.625).abs() < 1e-6);
+        let s = FrameSettings::default();
+        let t0 = Instant::now();
+        let mut a = FrameAnimator::new(t0);
+        let p = a.update(t0, &inputs(FrameState::Playing, &s), 1920, 1080);
+        assert!((p.phase - start_phase(1920.0, 1080.0)).abs() < 1e-6);
+        // Launch from rest: the frame also fades in.
+        assert!(p.brightness < 0.05);
+    }
+
+    #[test]
+    fn rotation_speed_matches_spec_after_launch() {
         let s = FrameSettings::default(); // speed 40 % = 1 lap / 12 s
         let t0 = Instant::now();
         let mut a = FrameAnimator::new(t0);
-        a.update(t0, &inputs(FrameState::Playing, &s), 100, 100);
-        for i in 1..=60 {
-            a.update(
-                t0 + Duration::from_millis(100 * i),
-                &inputs(FrameState::Playing, &s),
-                100,
-                100,
-            );
-        }
-        // 6 s -> half a lap.
-        assert!((a.phase - 0.5).abs() < 1e-3, "phase {}", a.phase);
+        let play = inputs(FrameState::Playing, &s);
+        let p1 = run(&mut a, t0, 0, 10, &play).phase;
+        let p2 = run(&mut a, t0, 10_010, 6, &play).phase;
+        // 6 s at full speed -> half a lap.
+        let d = (p2 - p1).rem_euclid(1.0);
+        assert!((d - 0.5).abs() < 0.01, "advance {d}");
     }
 
     #[test]
@@ -253,16 +310,8 @@ mod tests {
         let s = FrameSettings::default();
         let t0 = Instant::now();
         let mut a = FrameAnimator::new(t0);
-        let mut p = GlowParams::default();
-        for i in 0..=30 {
-            p = a.update(
-                t0 + Duration::from_millis(100 * i),
-                &inputs(FrameState::Paused, &s),
-                100,
-                100,
-            );
-        }
-        assert!((a.speed - 0.1).abs() < 0.01);
+        let p = run(&mut a, t0, 0, 6, &inputs(FrameState::Paused, &s));
+        assert!((a.speed.value() - 0.1).abs() < 0.01);
         assert!(p.brightness < 0.45 && p.brightness > 0.15);
     }
 

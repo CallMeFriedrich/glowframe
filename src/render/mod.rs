@@ -24,8 +24,13 @@ pub struct GlowParams {
     pub energy: f32,
     pub corner: f32,
     pub base_level: f32,
-    pub arc_len: f32,
+    /// Comet tail length (fraction of the perimeter).
+    pub tail_len: f32,
     pub dither_seed: f32,
+    /// Comet head size and soft leading edge (fractions of the perimeter).
+    pub head_len: f32,
+    pub lead_len: f32,
+    pub _pad: [f32; 2],
 }
 
 const _: () = assert!(size_of::<GlowParams>().is_multiple_of(16));

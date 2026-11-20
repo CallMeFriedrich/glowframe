@@ -62,6 +62,8 @@ pub struct TrackView<'a> {
     pub small: Option<&'a Arc<Image>>,
     /// Opacity of this track layer (cover crossfade on track change).
     pub alpha: f32,
+    /// Scale of the cover around its center (spring-in of a new cover).
+    pub scale: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -107,11 +109,13 @@ pub struct UiModel<'a> {
     pub time: f32,
     /// Player layout of this frame (centered/split transition).
     pub player: PlayerLayout,
+    /// Entry animation when the mode starts (spring, 0 -> 1).
+    pub intro: f32,
     pub lyrics: Option<LyricsView<'a>>,
     pub cover_lyrics: Option<CoverLyricsView<'a>>,
     /// 0..1: cover view makes room for the lyrics lines.
     pub cover_lyrics_mix: f32,
-    /// 0 = player view, 1 = cover view (eased).
+    /// 0 = player view, 1 = cover view (spring, may overshoot slightly).
     pub view: f32,
     /// 0..1 blend towards the standby screen.
     pub standby: f32,
@@ -695,8 +699,17 @@ fn mat_mul(a: &Matrix3x2, b: &Matrix3x2) -> Matrix3x2 {
     }
 }
 
+/// Entry scale: content grows from 96 % to 100 % with the intro spring.
+fn intro_scale(m: &UiModel) -> f32 {
+    0.96 + 0.04 * m.intro
+}
+
 fn player_transform(m: &UiModel, w: f32, h: f32) -> Matrix3x2 {
-    scale_about(1.0 - 0.04 * m.view, w / 2.0, h / 2.0)
+    scale_about((1.0 - 0.04 * m.view) * intro_scale(m), w / 2.0, h / 2.0)
+}
+
+fn cover_transform(m: &UiModel, w: f32, h: f32) -> Matrix3x2 {
+    scale_about((1.04 - 0.04 * m.view) * intro_scale(m), w / 2.0, h / 2.0)
 }
 
 /// Placement of one lyric line.
@@ -911,12 +924,14 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     let p = Painter { ctx, res };
     let (w, h) = res.size;
     let (cx, cy) = (w / 2.0, h / 2.0);
-    let content = 1.0 - m.standby;
+    let intro = m.intro.clamp(0.0, 1.0);
+    let content = (1.0 - m.standby).clamp(0.0, 1.0) * intro;
+    let view = m.view.clamp(0.0, 1.0);
 
     // ----- standby screen -----
     if m.standby > 0.0 {
         let (big, small) = layout::standby_sizes(h);
-        let a = m.standby;
+        let a = m.standby.clamp(0.0, 1.0) * intro;
         p.text(
             m.standby_title,
             &res.standby,
@@ -932,19 +947,20 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     }
 
     // ----- player view -----
-    let player_a = (1.0 - m.view) * content;
+    let player_a = (1.0 - view) * content;
     if player_a > 0.0 {
         p.set_transform(&player_transform(m, w, h));
         let l = m.player;
         for t in &m.tracks {
             let a = player_a * t.alpha;
+            let cr = l.cover.scaled(t.scale);
             if let Some(s) = t.small {
-                p.ambient(s, l.cover, 1.25, 0.55 * a);
+                p.ambient(s, cr, 1.25, 0.55 * a);
             }
-            p.cover(t.image.map(|i| i.as_ref()), l.cover, a);
+            p.cover(t.image.map(|i| i.as_ref()), cr, a);
             p.rounded(
-                l.cover,
-                l.cover.w * 0.035,
+                cr,
+                cr.w * 0.035,
                 color(0.02, 0.02, 0.03, 0.42 * m.pause * a),
             );
             p.text(t.title, &res.title, l.title, color(1.0, 1.0, 1.0, 0.95 * a));
@@ -977,17 +993,22 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     }
 
     // ----- cover view -----
-    let cover_a = m.view * content;
+    let cover_a = view * content;
     if cover_a > 0.0 {
-        p.set_transform(&scale_about(1.04 - 0.04 * m.view, cx, cy));
-        let r = layout::cover_view(w, h, m.cover_lyrics_mix);
+        p.set_transform(&cover_transform(m, w, h));
+        let r = layout::cover_view(w, h, m.cover_lyrics_mix.clamp(0.0, 1.0));
         for t in &m.tracks {
             let a = cover_a * t.alpha;
+            let cr = r.scaled(t.scale);
             if let Some(s) = t.small {
-                p.ambient(s, r, 1.35, 0.6 * a);
+                p.ambient(s, cr, 1.35, 0.6 * a);
             }
-            p.cover(t.image.map(|i| i.as_ref()), r, a);
-            p.rounded(r, r.w * 0.035, color(0.02, 0.02, 0.03, 0.42 * m.pause * a));
+            p.cover(t.image.map(|i| i.as_ref()), cr, a);
+            p.rounded(
+                cr,
+                cr.w * 0.035,
+                color(0.02, 0.02, 0.03, 0.42 * m.pause * a),
+            );
         }
         draw_cover_lyrics(&p, m, cover_a);
     }

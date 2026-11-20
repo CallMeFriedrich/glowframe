@@ -33,7 +33,7 @@ use crate::settings::store;
 use crate::settings::{MonitorMode, Settings};
 use crate::settings_window::{MonitorInfo, PanelEvent, SettingsWindow};
 use crate::tray::{MenuAction, Tray};
-use crate::ui::anim::{Smooth, Toggle, ease_in_out_cubic};
+use crate::ui::anim::Spring;
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
 use crate::ui::layout::{self, Button};
 
@@ -44,14 +44,6 @@ const HINT_DURATION: f32 = 1.5;
 const HINT_FADE: f32 = 0.4;
 /// How often the monitor layout is checked while active.
 const MONITOR_POLL: Duration = Duration::from_secs(2);
-/// Player <-> cover view crossfade (SPEC §5.2).
-const VIEW_TRANSITION: Duration = Duration::from_millis(400);
-/// Cover crossfade on track change (SPEC §5.6).
-const TRACK_TRANSITION: f32 = 0.5;
-/// Centered <-> split player layout (SPEC §5.3).
-const LAYOUT_TRANSITION: Duration = Duration::from_millis(550);
-/// Fade/slide of the lyric line in the cover view (SPEC §5.4).
-const LINE_TRANSITION: f32 = 0.35;
 const DEMO_LYRICS: &str = include_str!("../assets/demo/lyrics.lrc");
 /// Settings are written this long after the last change (slider drags).
 const SAVE_DELAY: Duration = Duration::from_millis(600);
@@ -130,10 +122,15 @@ struct ThumbImages {
 
 /// Animated UI state of the fullscreen views.
 struct UiState {
-    view: Toggle,
-    pause: Smooth,
-    standby: Smooth,
-    press: [Smooth; 5],
+    /// 0 = player view, 1 = cover view.
+    view: Spring,
+    pause: Spring,
+    standby: Spring,
+    press: [Spring; 5],
+    /// Entry animation when the mode starts (0 -> 1).
+    intro: Spring,
+    /// Cover change on track change (restarts at 0).
+    track: Spring,
     last_activity: Instant,
     last_cursor: Option<PhysicalPosition<f64>>,
     /// Pointer position in DIPs on the window it is over.
@@ -146,10 +143,13 @@ struct UiState {
 impl UiState {
     fn new(now: Instant) -> Self {
         Self {
-            view: Toggle::new(false, VIEW_TRANSITION),
-            pause: Smooth::new(0.0, 0.18),
-            standby: Smooth::new(0.0, 0.25),
-            press: [Smooth::new(0.0, 0.05); 5],
+            view: Spring::ui(0.0),
+            pause: Spring::smooth(0.0, 0.45),
+            standby: Spring::smooth(0.0, 0.6),
+            // Snappy, slightly bouncy press feedback.
+            press: [Spring::new(0.0, 0.28, 0.55); 5],
+            intro: Spring::new(0.0, 0.8, 0.9),
+            track: Spring::new(1.0, 0.6, 0.88),
             last_activity: now,
             last_cursor: None,
             pointer: None,
@@ -163,31 +163,31 @@ impl UiState {
 /// Animated lyrics presentation state.
 struct LyricsUi {
     /// Centered (0) <-> split (1) player layout.
-    split: Toggle,
-    /// Last eased split value (hit testing between frames).
+    split: Spring,
+    /// Last split value (hit testing between frames).
     split_value: f32,
     /// Lyric lines in the cover view on/off.
-    cover: Toggle,
-    /// Smoothly following line index.
-    scroll: Smooth,
+    cover: Spring,
+    /// Line index following the song like Apple Music's scrolling.
+    scroll: Spring,
     scroll_id: u64,
-    /// Cover view line change animation.
+    /// Cover view line change animation (restarts at 0).
     line: Option<usize>,
     prev_line: Option<usize>,
-    line_changed_at: Instant,
+    line_change: Spring,
 }
 
 impl LyricsUi {
-    fn new(now: Instant) -> Self {
+    fn new() -> Self {
         Self {
-            split: Toggle::new(false, LAYOUT_TRANSITION),
+            split: Spring::new(0.0, 0.65, 0.88),
             split_value: 0.0,
-            cover: Toggle::new(false, VIEW_TRANSITION),
-            scroll: Smooth::new(-1.0, 0.12),
+            cover: Spring::smooth(0.0, 0.5),
+            scroll: Spring::new(-1.0, 0.55, 0.9),
             scroll_id: 0,
             line: None,
             prev_line: None,
-            line_changed_at: now,
+            line_change: Spring::new(1.0, 0.45, 0.9),
         }
     }
 }
@@ -198,6 +198,7 @@ struct UiFrame {
     pause: f32,
     standby: f32,
     press: [f32; 5],
+    intro: f32,
     track_t: f32,
     split: f32,
     cover_lyrics: f32,
@@ -295,7 +296,7 @@ impl App {
             animator: FrameAnimator::new(now),
             ui: UiState::new(now),
             lyrics: LyricsTracker::default(),
-            lyrics_ui: LyricsUi::new(now),
+            lyrics_ui: LyricsUi::new(),
             monitors: None,
             next_monitor_check: now,
             last_esc: None,
@@ -380,7 +381,7 @@ impl App {
         self.animator = FrameAnimator::new(now);
         self.animator.jump_palette(&self.target_palette());
         self.ui = UiState::new(now);
-        self.lyrics_ui = LyricsUi::new(now);
+        self.lyrics_ui = LyricsUi::new();
         let standby = if self.media.session.is_none() {
             1.0
         } else {
@@ -728,6 +729,7 @@ impl App {
                 album_key,
             });
             self.track_changed_at = Instant::now();
+            self.ui.track.set(0.0);
             // No lyrics for ads (no title/artist) or when disabled (SPEC §5.6).
             let eligible = self.settings.lyrics.enabled
                 && !s.title.trim().is_empty()
@@ -946,7 +948,7 @@ impl App {
 
     /// Buttons are only interactive while the player view is visible.
     fn interactive(&self) -> bool {
-        self.ui.view.raw() < 0.5 && self.media.session.is_some()
+        self.ui.view.value() < 0.5 && self.media.session.is_some()
     }
 
     fn on_cursor_moved(&mut self, id: WindowId, pos: PhysicalPosition<f64>) {
@@ -1053,7 +1055,7 @@ impl App {
         let delay = Duration::from_secs(self.settings.cover_view_delay_s as u64);
         let idle = now.saturating_duration_since(self.ui.last_activity) >= delay;
         let cover_view = idle && has_session;
-        let view = self.ui.view.update(now, cover_view);
+        let view = self.ui.view.update(now, f32::from(u8::from(cover_view)));
         let paused = has_session && self.frame_state() == FrameState::Paused;
         let pause = self.ui.pause.update(now, if paused { 1.0 } else { 0.0 });
         let standby = self
@@ -1070,30 +1072,30 @@ impl App {
             press[i] = self.ui.press[i].update(now, target);
         }
         // Cursor hidden in the cover view (SPEC §5.1).
-        if cover_view && self.ui.view.raw() >= 1.0 {
+        if cover_view && view >= 0.98 {
             self.set_cursor_hidden(true);
         }
         if self.ui.hover.is_some() && !self.interactive() {
             self.update_hover();
         }
-        let track_t = ease_in_out_cubic(
-            now.saturating_duration_since(self.track_changed_at)
-                .as_secs_f32()
-                / TRACK_TRANSITION,
-        );
+        let intro = self.ui.intro.update(now, 1.0);
+        let track_t = self.ui.track.update(now, 1.0);
 
         // ----- lyrics -----
         self.request_lyrics(now);
         let ls = &self.settings.lyrics;
         let (show_player, show_cover) = (ls.enabled && ls.in_player, ls.enabled && ls.in_cover);
         let split_target = self.lyrics.split_target(now, show_player);
-        let split = self.lyrics_ui.split.update(now, split_target);
+        let split = self
+            .lyrics_ui
+            .split
+            .update(now, f32::from(u8::from(split_target)));
         self.lyrics_ui.split_value = split;
         let found = self.lyrics.lyrics().cloned();
         let cover_lyrics = self
             .lyrics_ui
             .cover
-            .update(now, show_cover && found.is_some());
+            .update(now, f32::from(u8::from(show_cover && found.is_some())));
         let line_state = match (&found, &self.media.session) {
             (Some(l), Some(s)) => {
                 let pos = s.clock.position(SystemTime::now());
@@ -1123,19 +1125,16 @@ impl App {
         if current_line != self.lyrics_ui.line {
             self.lyrics_ui.prev_line = self.lyrics_ui.line;
             self.lyrics_ui.line = current_line;
-            self.lyrics_ui.line_changed_at = now;
+            self.lyrics_ui.line_change.set(0.0);
         }
-        let line_change = ease_in_out_cubic(
-            now.saturating_duration_since(self.lyrics_ui.line_changed_at)
-                .as_secs_f32()
-                / LINE_TRANSITION,
-        );
+        let line_change = self.lyrics_ui.line_change.update(now, 1.0);
 
         UiFrame {
             view,
             pause,
             standby,
             press,
+            intro,
             track_t,
             split,
             cover_lyrics,
@@ -1168,7 +1167,7 @@ impl App {
             lines: &l.lines,
             scroll: frame.scroll,
             gap: st.gap,
-            alpha: frame.split,
+            alpha: frame.split.clamp(0.0, 1.0),
         };
         let cover = CoverLyricsView {
             current: text(st.current),
@@ -1176,12 +1175,12 @@ impl App {
             previous: text(self.lyrics_ui.prev_line),
             change: frame.line_change,
             gap: st.gap,
-            alpha: frame.cover_lyrics,
+            alpha: frame.cover_lyrics.clamp(0.0, 1.0),
         };
         (Some(player), Some(cover))
     }
 
-    fn track_view<'a>(&'a self, t: &'a TrackDisplay, alpha: f32) -> TrackView<'a> {
+    fn track_view<'a>(&'a self, t: &'a TrackDisplay, alpha: f32, scale: f32) -> TrackView<'a> {
         let thumb = t.thumb_key.and_then(|k| self.thumbs.get(&k));
         let hd = t.album_key.and_then(|k| self.hd_images.get(&k));
         TrackView {
@@ -1190,6 +1189,7 @@ impl App {
             image: hd.or(thumb.and_then(|i| i.image.as_ref())),
             small: thumb.and_then(|i| i.small.as_ref()),
             alpha,
+            scale,
         }
     }
 
@@ -1237,21 +1237,26 @@ impl App {
         };
         let params = self.animator.update(now, &inputs, size.0, size.1);
 
+        // Track change: the old cover fades while growing a little, the new
+        // one springs in from slightly smaller (overshoot comes from the spring).
+        let t = frame.track_t;
+        let fade = t.clamp(0.0, 1.0);
         let mut tracks = Vec::with_capacity(2);
-        if frame.track_t < 1.0
+        if fade < 1.0
             && let Some(p) = &self.previous
         {
-            tracks.push(self.track_view(p, 1.0 - frame.track_t));
+            tracks.push(self.track_view(p, 1.0 - fade, 1.0 + 0.04 * fade));
         }
         if let Some(c) = &self.current {
-            tracks.push(self.track_view(c, frame.track_t));
+            tracks.push(self.track_view(c, fade, 0.93 + 0.07 * t));
         }
         let (lyrics, cover_lyrics) = self.lyrics_views(&frame);
         let model = UiModel {
             time: now
                 .saturating_duration_since(self.track_changed_at)
                 .as_secs_f32(),
-            player: layout::player_mixed(size_dip.0, size_dip.1, frame.split),
+            player: layout::player_mixed(size_dip.0, size_dip.1, frame.split.clamp(0.0, 1.0)),
+            intro: frame.intro,
             lyrics,
             cover_lyrics,
             cover_lyrics_mix: frame.cover_lyrics,
@@ -1275,6 +1280,20 @@ impl App {
         if result == FrameResult::DeviceLost {
             self.device_lost();
         }
+    }
+
+    /// Size/position/DPI event of a fullscreen window: restore the exact
+    /// monitor rectangle, then repaint (black) or resize the swap chain.
+    fn on_geometry_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        if self.mode != Mode::Active {
+            return;
+        }
+        if let Some(w) = self.window(id) {
+            w.enforce_rect();
+            w.window.request_redraw();
+        }
+        self.resize(id);
+        self.check_monitors(event_loop);
     }
 
     fn resize(&mut self, id: WindowId) {
@@ -1370,16 +1389,18 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseInput { state, button, .. } => {
                 self.on_mouse_button(id, state, button);
             }
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                if self.mode == Mode::Active {
-                    self.resize(id);
-                    self.check_monitors(event_loop);
+            WindowEvent::ScaleFactorChanged {
+                mut inner_size_writer,
+                ..
+            } => {
+                // Keep the physical monitor size instead of winit's DPI resize.
+                if let Some(w) = self.window(id) {
+                    let _ = inner_size_writer.request_inner_size(w.rect.1);
                 }
+                self.on_geometry_event(event_loop, id);
             }
-            WindowEvent::Moved(_) => {
-                if self.mode == Mode::Active {
-                    self.check_monitors(event_loop);
-                }
+            WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
+                self.on_geometry_event(event_loop, id);
             }
             WindowEvent::CloseRequested => {
                 // Alt+F4 on a fullscreen window ends the mode, not the program.

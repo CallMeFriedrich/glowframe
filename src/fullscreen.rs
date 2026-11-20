@@ -4,7 +4,7 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use winit::window::{Fullscreen, Window, WindowId, WindowLevel};
+use winit::window::{Window, WindowId, WindowLevel};
 
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
@@ -14,9 +14,11 @@ use windows::Win32::System::Power::{
     ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetClientRect, GetWindowLongPtrW, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, WS_EX_APPWINDOW,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    GWL_EXSTYLE, GWL_STYLE, GetClientRect, GetWindowLongPtrW, HWND_TOPMOST, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    WS_CAPTION, WS_CLIPCHILDREN, WS_EX_APPWINDOW, WS_EX_CLIENTEDGE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
+    WS_THICKFRAME,
 };
 
 use crate::render::Surface;
@@ -27,11 +29,41 @@ pub struct MonitorWindow {
     pub surface: Option<Surface>,
     pub window: Window,
     pub mode: MonitorMode,
+    /// Physical monitor rectangle the window must cover exactly.
+    pub rect: (PhysicalPosition<i32>, PhysicalSize<u32>),
 }
 
 impl MonitorWindow {
     pub fn id(&self) -> WindowId {
         self.window.id()
+    }
+
+    /// Restores borderless popup style and the exact monitor rectangle if
+    /// anything (DPI change, shell, winit) changed them. Returns true if the
+    /// window had drifted.
+    pub fn enforce_rect(&self) -> bool {
+        let Some(hwnd) = hwnd(&self.window) else {
+            return false;
+        };
+        let (pos, size) = self.rect;
+        let ok_pos = self.window.outer_position().is_ok_and(|p| p == pos);
+        let ok_size = self.window.outer_size() == size;
+        // SAFETY: reading the style of our own window.
+        let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+        let ok_style = style & (WS_CAPTION.0 | WS_THICKFRAME.0) as isize == 0;
+        if ok_pos && ok_size && ok_style {
+            return false;
+        }
+        tracing::warn!(
+            ?pos,
+            ?size,
+            ok_pos,
+            ok_size,
+            ok_style,
+            "fullscreen window drifted, restoring"
+        );
+        set_popup(hwnd, pos, size);
+        true
     }
 }
 
@@ -67,25 +99,36 @@ pub fn create_windows(event_loop: &ActiveEventLoop, settings: &Settings) -> Vec<
         if mode == MonitorMode::Free {
             continue;
         }
+        // No winit fullscreen: its borderless mode could fall back to a
+        // captioned window of logical size on the second monitor. The popup
+        // style and the exact rectangle are set (and enforced) by us.
+        let (pos, size) = (monitor.position(), monitor.size());
         let attrs = Window::default_attributes()
             .with_title("Glowframe")
+            .with_visible(false)
             .with_decorations(false)
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_position(monitor.position())
-            .with_inner_size(monitor.size())
-            .with_fullscreen(Some(Fullscreen::Borderless(Some(monitor.clone()))));
+            .with_position(pos)
+            .with_inner_size(size);
         match event_loop.create_window(attrs) {
             Ok(window) => {
                 if let Some(hwnd) = hwnd(&window) {
-                    apply_tool_window_style(hwnd);
+                    set_popup(hwnd, pos, size);
+                    if mode == MonitorMode::Black {
+                        paint_black(&window);
+                    }
                 }
-                tracing::info!(monitor = %name, ?mode, primary = is_primary, size = ?monitor.size(), "window created");
+                tracing::info!(
+                    monitor = %name, ?mode, primary = is_primary, ?pos, ?size,
+                    scale = monitor.scale_factor(), "window created"
+                );
                 window.request_redraw();
                 out.push(MonitorWindow {
                     surface: None,
                     window,
                     mode,
+                    rect: (pos, size),
                 });
             }
             Err(e) => tracing::error!(error = %e, monitor = %name, "window creation failed"),
@@ -117,22 +160,32 @@ pub fn focus(window: &Window) {
     }
 }
 
-/// No taskbar entry (WS_EX_TOOLWINDOW) and topmost.
-fn apply_tool_window_style(hwnd: HWND) {
+/// Borderless popup (no caption, no frame), no taskbar entry
+/// (WS_EX_TOOLWINDOW), topmost, exactly covering `pos`/`size`, and shown.
+fn set_popup(hwnd: HWND, pos: PhysicalPosition<i32>, size: PhysicalSize<u32>) {
     // SAFETY: valid window handle owned by this thread.
     unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        let style = (style
+            & !((WS_CAPTION.0
+                | WS_THICKFRAME.0
+                | WS_SYSMENU.0
+                | WS_MINIMIZEBOX.0
+                | WS_MAXIMIZEBOX.0) as isize))
+            | (WS_POPUP.0 | WS_CLIPCHILDREN.0) as isize;
+        SetWindowLongPtrW(hwnd, GWL_STYLE, style);
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        let ex =
-            (ex & !(WS_EX_APPWINDOW.0 as isize)) | (WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0) as isize;
+        let ex = (ex & !((WS_EX_APPWINDOW.0 | WS_EX_WINDOWEDGE.0 | WS_EX_CLIENTEDGE.0) as isize))
+            | (WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0) as isize;
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex);
         let _ = SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            pos.x,
+            pos.y,
+            size.width as i32,
+            size.height as i32,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
     }
 }
