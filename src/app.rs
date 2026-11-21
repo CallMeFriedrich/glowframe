@@ -957,7 +957,7 @@ impl App {
                 let version = release.version_text();
                 tracing::info!(%version, "update available");
                 if silent && let Some(tray) = &self.tray {
-                    tray.notify(
+                    tray.notify_info(
                         self.i18n.t("notify.update_title"),
                         &self.i18n.tf("notify.update_body", &[("version", &version)]),
                     );

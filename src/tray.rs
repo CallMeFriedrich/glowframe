@@ -4,7 +4,8 @@ use tray_icon::menu::{Menu, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Shell::{
-    NIF_INFO, NIIF_WARNING, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_INFO, NIIF_INFO, NIIF_WARNING, NIM_MODIFY, NOTIFY_ICON_INFOTIP_FLAGS, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
 };
 
 use crate::i18n::I18n;
@@ -18,12 +19,17 @@ pub enum MenuAction {
     Quit,
 }
 
+/// Highest shell icon id tried when looking for our icon.
+const MAX_ICON_ID: u32 = 16;
+
 pub struct Tray {
     icon: TrayIcon,
     toggle: MenuItem,
     settings: MenuItem,
     quit: MenuItem,
     active: bool,
+    /// Shell `uID` of our icon once a notification succeeded.
+    notify_id: std::cell::Cell<Option<u32>>,
 }
 
 impl Tray {
@@ -49,6 +55,7 @@ impl Tray {
             settings,
             quit,
             active: false,
+            notify_id: std::cell::Cell::new(None),
         })
     }
 
@@ -96,24 +103,44 @@ impl Tray {
     /// Shows a balloon notification on the tray icon.
     ///
     /// `tray-icon` has no notification API, so we modify its shell icon
-    /// directly. It registers icons with `uID` from a counter starting at 1;
-    /// we create exactly one icon, hence `uID = 1`.
+    /// directly. Its Windows `uID` is not exposed and comes from a counter
+    /// that is shared with other ids (it was 2, not 1), so the ids are tried
+    /// in order and the one the shell accepts is remembered. Modifying an
+    /// id that does not exist on our hidden window simply fails.
     pub fn notify(&self, title: &str, text: &str) {
+        self.balloon(title, text, NIIF_WARNING);
+    }
+
+    /// Informational balloon (e.g. an update is available).
+    pub fn notify_info(&self, title: &str, text: &str) {
+        self.balloon(title, text, NIIF_INFO);
+    }
+
+    fn balloon(&self, title: &str, text: &str, kind: NOTIFY_ICON_INFOTIP_FLAGS) {
         let mut data = NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: HWND(self.icon.window_handle()),
-            uID: 1,
             uFlags: NIF_INFO,
-            dwInfoFlags: NIIF_WARNING,
+            dwInfoFlags: kind,
             ..Default::default()
         };
         copy_wide(&mut data.szInfoTitle, title);
         copy_wide(&mut data.szInfo, text);
-        // SAFETY: `data` is fully initialized and lives for the call.
-        let ok = unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) };
-        if !ok.as_bool() {
-            tracing::warn!("tray notification failed");
+        let known = self.notify_id.get();
+        let ids = known
+            .into_iter()
+            .chain((1..=MAX_ICON_ID).filter(|id| Some(*id) != known));
+        for id in ids {
+            data.uID = id;
+            // SAFETY: `data` is fully initialized and lives for the call.
+            if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool() {
+                self.notify_id.set(Some(id));
+                return;
+            }
         }
+        // SAFETY: reads the calling thread's last error.
+        let err = unsafe { windows::Win32::Foundation::GetLastError() };
+        tracing::warn!(?err, hwnd = ?data.hWnd, "tray notification failed");
     }
 }
 
