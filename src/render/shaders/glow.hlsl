@@ -168,5 +168,8 @@ float4 ps_main(float4 pos : SV_Position) : SV_Target
 
     float3 srgb = linear_to_srgb(c);
     float n = frac(sin(dot(pos.xy, float2(12.9898, 78.233)) + dither_seed) * 43758.5453) - 0.5;
-    return float4(srgb + n / 255.0, 1.0);
+    // Added on top of the background (v1.5). Alpha = coverage of the glow
+    // (premultiplied), so it also composes over a transparent window.
+    float3 o = saturate(srgb + n / 255.0);
+    return float4(o, max(o.r, max(o.g, o.b)));
 }

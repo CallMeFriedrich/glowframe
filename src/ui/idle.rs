@@ -111,9 +111,83 @@ impl IdleScheduler {
     }
 }
 
+/// Movement that wakes the idle view must happen within this window.
+pub const WAKE_WINDOW: Duration = Duration::from_millis(600);
+
+/// Mouse travel (DIPs within [`WAKE_WINDOW`]) needed to leave the idle view
+/// after resting for `rest` with the idle view appearing after `delay`
+/// (SPEC §5.2 v1.5). Before the idle view, any movement counts.
+pub fn wake_distance(rest: Duration, delay: Duration) -> f32 {
+    if rest < delay {
+        return 0.0;
+    }
+    let t = ((rest - delay).as_secs_f32() / 60.0).clamp(0.0, 1.0);
+    40.0 + 120.0 * t
+}
+
+/// Accumulates mouse travel while the idle view is shown.
+#[derive(Debug, Default)]
+pub struct WakeGate {
+    start: Option<Instant>,
+    travel: f32,
+}
+
+impl WakeGate {
+    /// Adds a movement of `dist` DIPs; returns `true` if it counts as
+    /// activity.
+    pub fn moved(&mut self, now: Instant, dist: f32, needed: f32) -> bool {
+        if needed <= 0.0 {
+            self.reset();
+            return true;
+        }
+        if self
+            .start
+            .is_none_or(|s| now.saturating_duration_since(s) > WAKE_WINDOW)
+        {
+            self.start = Some(now);
+            self.travel = 0.0;
+        }
+        self.travel += dist;
+        if self.travel >= needed {
+            self.reset();
+            return true;
+        }
+        false
+    }
+
+    pub fn reset(&mut self) {
+        self.start = None;
+        self.travel = 0.0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wake_distance_grows_with_rest() {
+        let d = Duration::from_secs(5);
+        assert_eq!(wake_distance(Duration::from_secs(3), d), 0.0);
+        assert_eq!(wake_distance(d, d), 40.0);
+        assert!((wake_distance(Duration::from_secs(35), d) - 100.0).abs() < 0.01);
+        assert_eq!(wake_distance(Duration::from_secs(600), d), 160.0);
+    }
+
+    #[test]
+    fn wake_gate_needs_enough_travel_in_time() {
+        let t0 = Instant::now();
+        let mut g = WakeGate::default();
+        // Free movement before the idle view.
+        assert!(g.moved(t0, 3.0, 0.0));
+        // Small nudges do not wake.
+        assert!(!g.moved(t0, 10.0, 40.0));
+        assert!(!g.moved(t0 + Duration::from_millis(100), 10.0, 40.0));
+        // Too slow: the window restarts.
+        assert!(!g.moved(t0 + Duration::from_secs(2), 25.0, 40.0));
+        // A clear movement wakes.
+        assert!(g.moved(t0 + Duration::from_millis(2200), 20.0, 40.0));
+    }
 
     #[test]
     fn intervals_stay_within_five_plus_minus_two_minutes() {

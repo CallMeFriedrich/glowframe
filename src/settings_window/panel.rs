@@ -5,7 +5,9 @@ use egui::{Color32, RichText, Ui};
 
 use super::hotkey_rec::{self, RecordError};
 use crate::i18n::I18n;
-use crate::settings::model::{ColorMode, Language, LyricsStyle, PalettePreset, Rgb};
+use crate::settings::model::{
+    BackgroundMode, ColorMode, Language, LyricsStyle, PalettePreset, Rgb,
+};
 use crate::settings::{MonitorMode, Settings};
 
 pub const ACCENT: Color32 = Color32::from_rgb(0xFF, 0x2E, 0xA6);
@@ -24,6 +26,22 @@ pub struct PanelInfo<'a> {
     pub hotkey_error: Option<&'a str>,
     pub recording: bool,
     pub record_error: Option<RecordError>,
+    pub update: &'a UpdateView,
+    /// Problem with the picked background image, already localized.
+    pub image_note: Option<&'a str>,
+}
+
+/// Update state shown in the settings (SPEC §6.5 v1.5).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum UpdateView {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate,
+    /// Newer version available (version text).
+    Available(String),
+    Installing,
+    Failed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +50,9 @@ pub enum PanelEvent {
     Recorded(String),
     CancelRecording,
     RecordFailed(RecordError),
+    CheckUpdates,
+    InstallUpdate,
+    PickBackground,
 }
 
 pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec<PanelEvent> {
@@ -102,6 +123,9 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                 if let Some(note) = note {
                     ui.label(RichText::new(note).color(WARN));
                 }
+                ui.checkbox(&mut s.autostart, i18n.t("settings.autostart"));
+                ui.add_space(4.0);
+                update_row(ui, i18n, info.update, &mut events);
             });
 
             section(ui, i18n.t("settings.monitors"), |ui| {
@@ -141,6 +165,41 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                     ui.end_row();
                 });
                 ui.checkbox(&mut s.show_clock, i18n.t("settings.show_clock"));
+            });
+
+            section(ui, i18n.t("settings.background"), |ui| {
+                let b = &mut s.background;
+                ui.horizontal_wrapped(|ui| {
+                    for (mode, key) in [
+                        (BackgroundMode::Black, "settings.bg_black"),
+                        (BackgroundMode::Wallpaper, "settings.bg_wallpaper"),
+                        (BackgroundMode::Image, "settings.bg_image"),
+                        (BackgroundMode::Transparent, "settings.bg_transparent"),
+                    ] {
+                        ui.radio_value(&mut b.mode, mode, i18n.t(key));
+                    }
+                });
+                if b.mode == BackgroundMode::Image {
+                    ui.horizontal(|ui| {
+                        if ui.button(i18n.t("settings.bg_pick")).clicked() {
+                            events.push(PanelEvent::PickBackground);
+                        }
+                        if b.image_file.is_none() {
+                            ui.label(RichText::new(i18n.t("settings.bg_no_image")).color(MUTED));
+                        }
+                    });
+                }
+                if let Some(note) = info.image_note {
+                    ui.label(RichText::new(note).color(WARN));
+                }
+                ui.add_enabled_ui(b.mode != BackgroundMode::Black, |ui| {
+                    grid(ui, "background", |ui| {
+                        ui.label(i18n.t("settings.bg_dim"));
+                        ui.add(egui::Slider::new(&mut b.dim, 0..=90).suffix(" %"));
+                        ui.end_row();
+                    });
+                });
+                ui.checkbox(&mut b.keep_taskbar, i18n.t("settings.bg_taskbar"));
             });
 
             section(ui, i18n.t("settings.frame"), |ui| {
@@ -223,6 +282,11 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                                 LyricsStyle::Messages,
                                 i18n.t("settings.style_messages"),
                             );
+                            ui.radio_value(
+                                &mut l.style,
+                                LyricsStyle::Constellation,
+                                i18n.t("settings.style_constellation"),
+                            );
                         });
                     });
                     egui::CollapsingHeader::new(i18n.t("settings.advanced"))
@@ -278,6 +342,52 @@ fn record_keys(ui: &mut Ui, events: &mut Vec<PanelEvent>) {
             events.push(e);
         }
     });
+}
+
+/// Version, "check for updates" and install button (SPEC §6.5 v1.5).
+fn update_row(ui: &mut Ui, i18n: &I18n, state: &UpdateView, events: &mut Vec<PanelEvent>) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(i18n.tf(
+                "settings.version",
+                &[("version", env!("CARGO_PKG_VERSION"))],
+            ))
+            .color(MUTED),
+        );
+        let busy = matches!(state, UpdateView::Checking | UpdateView::Installing);
+        if ui
+            .add_enabled(!busy, egui::Button::new(i18n.t("settings.update_check")))
+            .clicked()
+        {
+            events.push(PanelEvent::CheckUpdates);
+        }
+    });
+    match state {
+        UpdateView::Idle => {}
+        UpdateView::Checking => {
+            ui.label(RichText::new(i18n.t("settings.update_checking")).color(MUTED));
+        }
+        UpdateView::UpToDate => {
+            ui.label(RichText::new(i18n.t("settings.update_uptodate")).color(MUTED));
+        }
+        UpdateView::Available(v) => {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(i18n.tf("settings.update_available", &[("version", v)]))
+                        .color(ACCENT),
+                );
+                if ui.button(i18n.t("settings.update_install")).clicked() {
+                    events.push(PanelEvent::InstallUpdate);
+                }
+            });
+        }
+        UpdateView::Installing => {
+            ui.label(RichText::new(i18n.t("settings.update_installing")).color(ACCENT));
+        }
+        UpdateView::Failed(e) => {
+            ui.label(RichText::new(i18n.tf("settings.update_failed", &[("error", e)])).color(WARN));
+        }
+    }
 }
 
 fn section(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui)) {

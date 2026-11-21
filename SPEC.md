@@ -20,7 +20,7 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - Kein Overlay im normalen Desktop-Betrieb. Der Rahmen existiert nur im Vollbild-Modus.
 - Keine Notch.
 - Keine Leiste unten im Vollbild und kein Lyrics-Button. Alles wird **ausschließlich in den Einstellungen** gesteuert.
-- Kein Autostart mit Windows.
+- ~~Kein Autostart mit Windows.~~ Seit v1.5 als Option (Standard aus, §7).
 - Keine Lyrics-Karte im Apple-Maps-Stil und keine Verci-Effekte.
 - Keine wortgenauen Lyrics. Zeilengenau reicht. LRCLIB liefert inzwischen teilweise Wort-Timings (`hasWordSync`), das ist ein Kandidat für später.
 - Kein Fortschrittsbalken und keine Lautstärkeregelung.
@@ -71,8 +71,9 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - **Beim ersten Esc** erscheint unten mittig ein dezenter Hinweis „Nochmal Esc zum Beenden“ / „Press Esc again to exit“, der nach 1,5 s ausblendet.
 - **Alternativen:** der Hotkey oder Tray → Stoppen.
 
-### Taste F (v1.3)
-- Schaltet im laufenden Modus den Lyrics-Stil um: **Klassisch** ↔ **Nachrichten** (§5.4b). Die Wahl wird gespeichert und ist auch in den Einstellungen änderbar (§7).
+### Zifferntasten 1–9 (v1.5, ersetzt Taste F aus v1.3)
+- Wählen im laufenden Modus den Lyrics-Stil direkt: **1** Klassisch, **2** Nachrichten (§5.4b), **3** Sternbild (§5.4c). Weitere Stile bekommen die nächsten Ziffern bis 9; unbelegte Ziffern tun nichts.
+- Die Wahl wird gespeichert und ist auch in den Einstellungen änderbar (§7).
 
 ### Einzelinstanz
 - **Mechanismus:** benannter Mutex.
@@ -91,11 +92,19 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - **Monitor-Änderungen:** Werden im laufenden Modus Monitore an- oder abgesteckt, werden die Fenster neu aufgebaut.
 - **Bildschirm wach halten:** Während der Modus aktiv ist, verhindern Bildschirmschoner und Energiesparen ein Abschalten (`SetThreadExecutionState`).
 - **Mauszeiger:** in der Cover-Ansicht ausgeblendet, bei Bewegung sofort wieder da.
+- **Hintergrund (v1.5, nur Animations-Monitore):**
+  - **Schwarz** (Standard).
+  - **Windows-Hintergrundbild:** das aktuelle Desktop-Hintergrundbild wird als Hintergrund gezeichnet („cover“-skaliert).
+  - **Eigenes Bild:** vom Nutzer gewählt (PNG/JPEG/BMP/WebP über WIC), Mindestauflösung 2560×1440; kleinere Bilder werden mit Hinweis abgelehnt. Das Bild wird in die App-Daten kopiert (`…\Glowframe\background.*`).
+  - **Durchsichtig:** Das Fenster ist echt transparent (DirectComposition, Swapchain mit Alpha); man sieht alles dahinter (Desktop, offene Fenster). Eingaben gehen weiter an Glowframe.
+  - **Abdunkeln:** 0–90 %, Standard 50 %; legt Schwarz über Bild bzw. Durchsicht, damit Rahmen und Text lesbar bleiben.
+  - **Taskleiste sichtbar lassen:** Das Vollbildfenster deckt dann nur den Arbeitsbereich ab (ohne Taskleiste).
 
 ### 5.2 Ansichten und Wechsel
 Es gibt drei Ansichten:
 
 - **Player-Ansicht:** erscheint bei Mausbewegung.
+  - **Aufweck-Schwelle (v1.5):** Während die Ruhe-Ansicht steht, zählt nur eine deutliche Bewegung: Die Maus muss innerhalb von 0,6 s eine Mindeststrecke zurücklegen, die mit der Ruhedauer wächst (≈ 40 DIP beim Erscheinen der Ruhe-Ansicht bis ≈ 160 DIP nach einer Minute Ruhe). Kleines Anstoßen weckt nicht. Klicks wecken sofort.
 - **Ruhe-Ansicht:** erscheint, wenn die Maus *N* Sekunden ruht (Einstellung, Standard 5 s). Sie ist entweder die **Cover-Ansicht** (§5.4) oder die **Lyrics-Fokus-Ansicht** (§5.4a, v1.2).
   - Jedes Mal, wenn die Ruhe-Ansicht beginnt, wird mit 50:50-Chance gewählt, ob die Cover-Ansicht oder die Lyrics-Fokus-Ansicht erscheint.
   - Bleibt die Maus länger ruhig, wechseln sich beide in zufälligen Abständen von 5 min ± 2 min ab (weiche Überblendung per Feder).
@@ -155,6 +164,13 @@ Lyrics als Chatverlauf im Stil von iMessage (dunkles Design). Ruhe-Ansicht im Ly
 - **Wort für Wort:** In der aktuellen Bubble werden die Wörter nacheinander hell; sie sind bis dahin gedimmt. Da LRCLIB nur Zeilenzeiten liefert, wird die Zeit bis zur nächsten Zeile nach Wortlänge auf die Wörter verteilt (Näherung).
 - **Instrumentale Lücken:** Tipp-Indikator (Bubble mit drei pulsierenden Punkten) auf der Seite der nächsten Zeile.
 - **Karten:** Nennt eine Zeile einen Ort (Liste bekannter Städte, Länder und Orte, DE/EN) oder Wörter wie Karte, Maps, Stadt, Straße, Brücke, erscheint sie als Karten-Bubble: oben eine selbst gezeichnete, stilisierte Mini-Karte (Straßen, Wasser, Pin; aus dem Text erzeugt, kein Kartendienst, kein Netz), darunter die Zeile fett und eine Ortszeile mit Pin-Symbol (genannter Ort, sonst ein Ort aus der Liste).
+
+### 5.4c Sternbild-Ansicht (v1.5)
+Lyrics als Sternbild: Ruhe-Ansicht im Lyrics-Stil „Sternbild“, nur mit synchronisierten Lyrics.
+- Jedes Wort der aktuellen Zeile ist ein kleiner vierzackiger Stern mit dem Wort darunter bzw. darüber, im Zickzack über die Bildschirmmitte verteilt (Positionen pro Zeile deterministisch aus dem Text, sodass sich nichts überlappt).
+- Die Wörter erscheinen nacheinander (Zeit bis zur nächsten Zeile nach Wortlänge verteilt, wie §5.4b); jeder neue Stern wird mit einer dünnen Linie vom vorherigen aus verbunden, die Linie wächst per Feder hin.
+- Das aktuelle Wort ist größer und heller mit leichtem Schein; ältere Sterne und Linien sind gedimmt. Farbe: erste Palettenfarbe (Akzent).
+- Zeilenwechsel: das alte Sternbild blendet aus und driftet leicht, das neue baut sich auf. Instrumentale Lücken: pulsierende Punkte.
 
 ### 5.5 Leuchtrahmen
 - **Form:** Er folgt dem rechteckigen Bildschirmrand mit leicht abgerundeten Ecken und leuchtet weich nach innen aus (Glow-Falloff, keine harte Linie).
@@ -236,6 +252,15 @@ Lyrics als Chatverlauf im Stil von iMessage (dunkles Design). Ruhe-Ansicht im Ly
 - **Rate-Limit (429):** `Retry-After` beachten, plus Jitter. Nie mehr als ein Request gleichzeitig.
 - **Cache:** `%LOCALAPPDATA%\Glowframe\cache\lyrics\` als JSON pro Track.
 
+### 6.5 Updates (v1.5)
+- **Quelle:** `GET https://api.github.com/repos/CallMeFriedrich/glowframe/releases/latest` (öffentlich, ohne Token, mit `User-Agent`).
+- **Vergleich:** Tag `vX.Y.Z` gegen die eigene Version (SemVer); nur neuere Versionen werden angeboten.
+- **Wann:** per Knopf „Nach Updates suchen“ in den Einstellungen und einmal still ~10 s nach dem Programmstart; bei neuer Version eine Tray-Benachrichtigung, im Einstellungsfenster „Version X verfügbar – Installieren“.
+- **Installieren:**
+  - **Installierte Version:** `Glowframe-<v>-setup.exe` herunterladen, SHA-256 gegen den `digest` aus der GitHub-API prüfen, mit `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` starten, Glowframe beendet sich; der Installer startet es danach wieder.
+  - **Portable Version:** `…-portable.zip` herunterladen und prüfen, die neue Exe neben die alte entpacken, die laufende Exe umbenennen (`.old`), neue an ihre Stelle setzen, neu starten; `.old` wird beim nächsten Start gelöscht.
+  - Ohne passenden Digest oder bei Fehlern wird nichts installiert, Fehler werden angezeigt und geloggt.
+
 ## 7. Einstellungen
 
 **Fenster:** normales Fenster außerhalb des Vollbilds, im gleichen dunklen Stil. Rechts oben ein Sprachumschalter **DE | EN**, der sofort wirkt.
@@ -246,6 +271,12 @@ Lyrics als Chatverlauf im Stil von iMessage (dunkles Design). Ruhe-Ansicht im Ly
 |---|---|---|---|
 | Allgemein | Sprache | DE / EN | Systemsprache (DE wenn Deutsch, sonst EN) |
 | Allgemein | Hotkey | Kombination aufnehmen | `Strg+Alt+L` |
+| Allgemein | Mit Windows starten (v1.5) | an/aus (Registry `HKCU\…\Run`) | aus |
+| Allgemein | Updates (v1.5) | Knopf „Nach Updates suchen“, Anzeige der Version, „Installieren“ | – |
+| Hintergrund (v1.5) | Hintergrund | Schwarz / Windows-Hintergrundbild / Eigenes Bild / Durchsichtig | Schwarz |
+| Hintergrund | Eigenes Bild | Datei wählen (≥ 2560×1440) | – |
+| Hintergrund | Abdunkeln | 0–90 % | 50 % |
+| Hintergrund | Taskleiste sichtbar lassen | an/aus | aus |
 | Monitore | Modus je Monitor | Animation / Schwarz / Frei (Liste mit Monitorname und Auflösung, Primär markiert) | Primär = Animation, Rest = Schwarz |
 | Ansicht | Zeit bis Cover-Ansicht | 2–60 s | 5 s |
 | Ansicht | Datum und Uhrzeit anzeigen (v1.2) | an/aus | an |
@@ -258,7 +289,7 @@ Lyrics als Chatverlauf im Stil von iMessage (dunkles Design). Ruhe-Ansicht im Ly
 | Lyrics | Lyrics anzeigen | an/aus (Hauptschalter) | an |
 | Lyrics | In Player-Ansicht | an/aus | an |
 | Lyrics | In Cover-Ansicht | an/aus | an |
-| Lyrics | Stil (v1.3, auch per Taste F) | Klassisch / Nachrichten | Klassisch |
+| Lyrics | Stil (v1.3/v1.5, auch per Zifferntaste 1–9) | Klassisch / Nachrichten / Sternbild | Klassisch |
 | Lyrics (erweitert) | Versatz | −2000 … +2000 ms | 0 |
 | Cover | HD-Cover laden | an/aus | an |
 

@@ -13,9 +13,11 @@ use windows::Win32::Graphics::Direct3D::{
     D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1, ID3DBlob,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-    D3D11_SDK_VERSION, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Buffer, ID3D11Device,
-    ID3D11DeviceContext, ID3D11PixelShader, ID3D11VertexShader,
+    D3D11_BIND_CONSTANT_BUFFER, D3D11_BLEND_DESC, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
+    D3D11_BUFFER_DESC, D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11_RENDER_TARGET_BLEND_DESC, D3D11_SDK_VERSION, D3D11_USAGE_DEFAULT, D3D11CreateDevice,
+    ID3D11BlendState, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
+    ID3D11VertexShader,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory,
@@ -36,6 +38,9 @@ pub struct Gpu {
     pub vs: ID3D11VertexShader,
     pub ps: ID3D11PixelShader,
     pub params: ID3D11Buffer,
+    /// Additive blending: the glow is added on top of the background
+    /// (wallpaper, custom image, transparency; SPEC §5.1 v1.5).
+    pub blend_add: ID3D11BlendState,
 }
 
 impl Gpu {
@@ -83,6 +88,20 @@ impl Gpu {
             let mut params = None;
             device.CreateBuffer(&desc, None, Some(&mut params))?;
 
+            let mut blend = D3D11_BLEND_DESC::default();
+            blend.RenderTarget[0] = D3D11_RENDER_TARGET_BLEND_DESC {
+                BlendEnable: true.into(),
+                SrcBlend: D3D11_BLEND_ONE,
+                DestBlend: D3D11_BLEND_ONE,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ONE,
+                DestBlendAlpha: D3D11_BLEND_ONE,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
+            };
+            let mut blend_add = None;
+            device.CreateBlendState(&blend, Some(&mut blend_add))?;
+
             Ok(Self {
                 device,
                 context,
@@ -92,6 +111,7 @@ impl Gpu {
                 vs: vs.ok_or_else(windows::core::Error::empty)?,
                 ps: ps.ok_or_else(windows::core::Error::empty)?,
                 params: params.ok_or_else(windows::core::Error::empty)?,
+                blend_add: blend_add.ok_or_else(windows::core::Error::empty)?,
             })
         }
     }

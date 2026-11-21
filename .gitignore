@@ -11,3 +11,7 @@ Screenshot*.png
 
 # local tool state
 .omc/
+
+# Screenshots dropped into the project root (never commit)
+/*.png
+/*.jpg

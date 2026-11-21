@@ -48,8 +48,15 @@ Name: "{autoprograms}\Glowframe"; Filename: "{app}\Glowframe.exe"
 
 [Run]
 Filename: "{app}\Glowframe.exe"; Description: "{cm:LaunchProgram,Glowframe}"; Flags: nowait postinstall skipifsilent
+; In-app update (SPEC 6.5): silent install with /relaunch=1 restarts the app.
+Filename: "{app}\Glowframe.exe"; Flags: nowait; Check: ShouldRelaunch
 
 [Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and not UninstallSilent then

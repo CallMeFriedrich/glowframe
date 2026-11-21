@@ -21,6 +21,20 @@ use windows::Win32::Graphics::Direct2D::{
 };
 
 mod chat;
+mod stars;
+
+/// Constellation view (SPEC §5.4c).
+pub struct StarsView<'a> {
+    pub current: &'a str,
+    pub current_seed: u64,
+    /// Revealed words of the current line (fractional).
+    pub revealed: f32,
+    pub previous: &'a str,
+    pub previous_seed: u64,
+    /// 0..1 progress of the last line change.
+    pub change: f32,
+    pub gap: bool,
+}
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT,
     DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
@@ -161,6 +175,12 @@ pub struct UiModel<'a> {
     /// Messages view (SPEC §5.4b) and its blend over the classic idle views.
     pub chat: Option<ChatView<'a>>,
     pub chat_mix: f32,
+    /// Constellation view (SPEC §5.4c) and its blend.
+    pub stars: Option<StarsView<'a>>,
+    pub stars_mix: f32,
+    /// Background image (wallpaper or custom) and black dimming 0..1.
+    pub background: Option<&'a Arc<Image>>,
+    pub background_dim: f32,
     /// Clock line visibility 0..1 (setting, faded).
     pub clock: f32,
     /// Clock line (SPEC §5.2): bold time and dimmed date.
@@ -209,6 +229,7 @@ pub struct UiResources {
     focus_title: IDWriteTextFormat,
     focus_artist: IDWriteTextFormat,
     chat: chat::ChatFormats,
+    stars: stars::StarFormats,
     factory: ID2D1Factory,
     brush: ID2D1SolidColorBrush,
     /// Extra brushes for word-by-word reveal (drawing effects).
@@ -361,6 +382,7 @@ impl UiResources {
                     false,
                 )?,
                 chat: chat::ChatFormats::new(dwrite, &ui_font, &icon_font, w, h)?,
+                stars: stars::StarFormats::new(dwrite, &ui_font, h)?,
                 factory: ctx.GetFactory()?,
                 brush: ctx.CreateSolidColorBrush(&white, None)?,
                 brush_hi: ctx.CreateSolidColorBrush(&white, None)?,
@@ -1054,6 +1076,61 @@ fn draw_cover_lyrics(p: &Painter, m: &UiModel, alpha: f32) {
     );
 }
 
+/// Background pass before the glow (SPEC §5.1 v1.5): clear to black (or
+/// fully transparent), draw the image "cover"-scaled, then dim it.
+pub fn draw_background(
+    ctx: &ID2D1DeviceContext,
+    res: &UiResources,
+    m: &UiModel,
+    transparent: bool,
+) {
+    let p = Painter { ctx, res };
+    let (w, h) = res.size;
+    p.set_transform(&scale_about(1.0, 0.0, 0.0));
+    let clear = if transparent {
+        color(0.0, 0.0, 0.0, 0.0)
+    } else {
+        color(0.0, 0.0, 0.0, 1.0)
+    };
+    // SAFETY: called between BeginDraw/EndDraw.
+    unsafe { ctx.Clear(Some(&clear)) };
+    let intro = m.intro.clamp(0.0, 1.0);
+    let mut has_content = transparent;
+    if let Some(img) = m.background
+        && let Some(brush) = res.bitmap_brush(ctx, img)
+    {
+        // "cover": fill the screen, crop the overflow, keep the aspect.
+        let s = (w / img.width as f32).max(h / img.height as f32);
+        let (iw, ih) = (img.width as f32 * s, img.height as f32 * s);
+        // SAFETY: drawing between BeginDraw/EndDraw.
+        unsafe {
+            brush.SetTransform(&Matrix3x2 {
+                M11: s,
+                M12: 0.0,
+                M21: 0.0,
+                M22: s,
+                M31: (w - iw) / 2.0,
+                M32: (h - ih) / 2.0,
+            });
+            // Fades in with the mode like the rest of the content.
+            brush.SetOpacity(intro);
+            ctx.FillRectangle(&d2d_rect(Rect::new(0.0, 0.0, w, h)), &brush);
+        }
+        has_content = true;
+    }
+    if has_content {
+        let dim = if transparent {
+            // The desktop shows through; the intro fades the dimming in.
+            m.background_dim * intro
+        } else {
+            m.background_dim
+        };
+        p.fill_color(color(0.0, 0.0, 0.0, dim.clamp(0.0, 1.0)));
+        // SAFETY: drawing between BeginDraw/EndDraw.
+        unsafe { ctx.FillRectangle(&d2d_rect(Rect::new(0.0, 0.0, w, h)), &res.brush) };
+    }
+}
+
 pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     let p = Painter { ctx, res };
     let (w, h) = res.size;
@@ -1135,7 +1212,12 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     } else {
         0.0
     };
-    let idle_a = view * content * (1.0 - chat_mix);
+    let stars_mix = if m.stars.is_some() {
+        m.stars_mix.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let idle_a = view * content * (1.0 - chat_mix - stars_mix).max(0.0);
     if idle_a > 0.0 {
         let base = cover_transform(m, w, h);
         p.set_transform(&base);
@@ -1190,6 +1272,13 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
         && let Some(c) = &m.chat
     {
         chat::draw(&p, m, c, &cover_transform(m, w, h), chat_a);
+    }
+    // ----- constellation view (SPEC §5.4c) -----
+    let stars_a = view * content * stars_mix;
+    if stars_a > 0.0
+        && let Some(s) = &m.stars
+    {
+        stars::draw(&p, m, s, &cover_transform(m, w, h), stars_a);
     }
     p.set_transform(&scale_about(1.0, 0.0, 0.0));
 

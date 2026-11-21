@@ -2,6 +2,8 @@
 
 mod app;
 mod audio;
+mod autostart;
+mod background;
 mod cache;
 mod cli;
 mod color;
@@ -20,6 +22,7 @@ mod settings_window;
 mod single_instance;
 mod tray;
 mod ui;
+mod update;
 
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use tray_icon::menu::MenuEvent;

@@ -14,7 +14,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId, WindowLevel};
 
 pub use hotkey_rec::RecordError;
-pub use panel::{MonitorInfo, PanelEvent};
+pub use panel::{MonitorInfo, PanelEvent, UpdateView};
 
 use crate::i18n::I18n;
 use crate::settings::Settings;
@@ -114,6 +114,8 @@ impl SettingsWindow {
         i18n: &I18n,
         monitors: &[MonitorInfo],
         hotkey_error: Option<&str>,
+        update: &UpdateView,
+        image_note: Option<&str>,
     ) -> Vec<PanelEvent> {
         self.repaint_at = None;
         let raw = self.state.take_egui_input(&self.gl.window);
@@ -122,6 +124,8 @@ impl SettingsWindow {
             hotkey_error,
             recording: self.recording,
             record_error: self.record_error,
+            update,
+            image_note,
         };
         let mut events = Vec::new();
         let mut full = self.ctx.run_ui(raw, |ui| {

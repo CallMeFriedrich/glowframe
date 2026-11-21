@@ -6,10 +6,14 @@ use winit::monitor::MonitorHandle;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{Window, WindowId, WindowLevel};
 
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
-    BLACK_BRUSH, FillRect, GetDC, GetStockObject, HBRUSH, ReleaseDC, ValidateRect,
+    BLACK_BRUSH, FillRect, GetDC, GetMonitorInfoW, GetStockObject, HBRUSH,
+    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, ReleaseDC, ValidateRect,
 };
+use winit::platform::windows::WindowAttributesExtWindows;
+
+use crate::settings::model::BackgroundMode;
 use windows::Win32::System::Power::{
     ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
 };
@@ -29,8 +33,11 @@ pub struct MonitorWindow {
     pub surface: Option<Surface>,
     pub window: Window,
     pub mode: MonitorMode,
-    /// Physical monitor rectangle the window must cover exactly.
+    /// Physical rectangle the window must cover exactly (monitor, or its
+    /// work area when the taskbar stays visible).
     pub rect: (PhysicalPosition<i32>, PhysicalSize<u32>),
+    /// Real transparency via DirectComposition (SPEC §5.1 v1.5).
+    pub transparent: bool,
 }
 
 impl MonitorWindow {
@@ -102,7 +109,13 @@ pub fn create_windows(event_loop: &ActiveEventLoop, settings: &Settings) -> Vec<
         // No winit fullscreen: its borderless mode could fall back to a
         // captioned window of logical size on the second monitor. The popup
         // style and the exact rectangle are set (and enforced) by us.
-        let (pos, size) = (monitor.position(), monitor.size());
+        let (pos, size) = if settings.background.keep_taskbar {
+            work_area(monitor.position(), monitor.size())
+        } else {
+            (monitor.position(), monitor.size())
+        };
+        let transparent = mode == MonitorMode::Animation
+            && settings.background.mode == BackgroundMode::Transparent;
         let attrs = Window::default_attributes()
             .with_title("Glowframe")
             .with_visible(false)
@@ -110,7 +123,9 @@ pub fn create_windows(event_loop: &ActiveEventLoop, settings: &Settings) -> Vec<
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_position(pos)
-            .with_inner_size(size);
+            .with_inner_size(size)
+            // DirectComposition content only, no GDI redirection surface.
+            .with_no_redirection_bitmap(transparent);
         match event_loop.create_window(attrs) {
             Ok(window) => {
                 if let Some(hwnd) = hwnd(&window) {
@@ -129,6 +144,7 @@ pub fn create_windows(event_loop: &ActiveEventLoop, settings: &Settings) -> Vec<
                     window,
                     mode,
                     rect: (pos, size),
+                    transparent,
                 });
             }
             Err(e) => tracing::error!(error = %e, monitor = %name, "window creation failed"),
@@ -143,6 +159,34 @@ pub fn create_windows(event_loop: &ActiveEventLoop, settings: &Settings) -> Vec<
         focus(&w.window);
     }
     out
+}
+
+/// Work area (monitor minus taskbar) of the monitor at `pos`/`size`.
+fn work_area(
+    pos: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+    let center = POINT {
+        x: pos.x + size.width as i32 / 2,
+        y: pos.y + size.height as i32 / 2,
+    };
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: plain monitor query with a correctly sized out struct.
+    let ok = unsafe {
+        let hmon = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
+        GetMonitorInfoW(hmon, &mut info).as_bool()
+    };
+    let r = info.rcWork;
+    if !ok || r.right <= r.left || r.bottom <= r.top {
+        return (pos, size);
+    }
+    (
+        PhysicalPosition::new(r.left, r.top),
+        PhysicalSize::new((r.right - r.left) as u32, (r.bottom - r.top) as u32),
+    )
 }
 
 pub fn hwnd(window: &Window) -> Option<HWND> {

@@ -108,13 +108,67 @@ impl Default for FrameSettings {
     }
 }
 
-/// Presentation of the lyrics in the idle view (SPEC §5.4b, key F).
+/// Presentation of the lyrics in the idle view (SPEC §5.4b/c, keys 1-9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LyricsStyle {
     #[default]
     Classic,
     Messages,
+    Constellation,
+}
+
+impl LyricsStyle {
+    /// In key order: digit 1 selects `ALL[0]` and so on (SPEC §4).
+    pub const ALL: [LyricsStyle; 3] = [
+        LyricsStyle::Classic,
+        LyricsStyle::Messages,
+        LyricsStyle::Constellation,
+    ];
+
+    pub fn from_digit(d: u32) -> Option<Self> {
+        (1..=9)
+            .contains(&d)
+            .then(|| Self::ALL.get(d as usize - 1).copied())
+            .flatten()
+    }
+}
+
+/// Background of the animation monitors (SPEC §5.1 v1.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackgroundMode {
+    #[default]
+    Black,
+    /// The current Windows desktop wallpaper.
+    Wallpaper,
+    /// The user's image, copied into the app data folder.
+    Image,
+    /// Real transparency (DirectComposition).
+    Transparent,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackgroundSettings {
+    pub mode: BackgroundMode,
+    /// Black overlay 0..=90 %.
+    pub dim: u8,
+    /// Leave the taskbar uncovered (window covers the work area only).
+    pub keep_taskbar: bool,
+    /// File name of the copied custom image inside the data folder.
+    pub image_file: Option<String>,
+}
+
+impl Default for BackgroundSettings {
+    fn default() -> Self {
+        Self {
+            mode: BackgroundMode::Black,
+            dim: 50,
+            keep_taskbar: false,
+            image_file: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -153,6 +207,9 @@ pub struct Settings {
     pub cover_view_delay_s: u32,
     /// Clock line with date and time at the top (v1.2).
     pub show_clock: bool,
+    /// Start with Windows (v1.5).
+    pub autostart: bool,
+    pub background: BackgroundSettings,
     pub frame: FrameSettings,
     pub lyrics: LyricsSettings,
     pub hd_cover: bool,
@@ -167,6 +224,8 @@ impl Default for Settings {
             monitors: BTreeMap::new(),
             cover_view_delay_s: 5,
             show_clock: true,
+            autostart: false,
+            background: BackgroundSettings::default(),
             frame: FrameSettings::default(),
             lyrics: LyricsSettings::default(),
             hd_cover: true,
@@ -193,6 +252,7 @@ impl Settings {
             *v = (*v).min(100);
         }
         self.lyrics.offset_ms = self.lyrics.offset_ms.clamp(-2000, 2000);
+        self.background.dim = self.background.dim.min(90);
         if self.hotkey.trim().is_empty() {
             self.hotkey = Settings::default().hotkey;
         }
@@ -236,6 +296,22 @@ mod tests {
         assert_eq!(s.lyrics.offset_ms, -2000);
         assert_eq!(s.hotkey, "Ctrl+Alt+L");
         assert_eq!(s.version, CURRENT_VERSION);
+    }
+
+    #[test]
+    fn v15_defaults_and_digits() {
+        let s: Settings = serde_json::from_str(r#"{"version":1}"#).unwrap_or_default();
+        assert!(!s.autostart);
+        assert_eq!(s.background, BackgroundSettings::default());
+        assert_eq!(s.background.dim, 50);
+        assert_eq!(LyricsStyle::from_digit(1), Some(LyricsStyle::Classic));
+        assert_eq!(LyricsStyle::from_digit(3), Some(LyricsStyle::Constellation));
+        assert_eq!(LyricsStyle::from_digit(4), None);
+        assert_eq!(LyricsStyle::from_digit(0), None);
+        let mut s = s;
+        s.background.dim = 200;
+        s.sanitize();
+        assert_eq!(s.background.dim, 90);
     }
 
     #[test]

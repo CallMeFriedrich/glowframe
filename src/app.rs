@@ -14,6 +14,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorIcon, WindowId};
 
 use crate::audio::AudioAnalyzer;
+use crate::background::ImportError;
 use crate::cli::CliArgs;
 use crate::color::{Oklab, linear_to_srgb};
 use crate::cover::{CoverResult, CoverWorker, Image, Palette, hd};
@@ -25,15 +26,17 @@ use crate::lyrics::lrc::{self, LineState};
 use crate::lyrics::{LyricsTracker, state_at};
 use crate::media::{Command, MediaService, MediaSnapshot, Playback, RepeatMode, Session};
 use crate::net::{NetJob, NetResult, NetWorker};
+use crate::render::ui::StarsView;
 use crate::render::ui::{
     BubbleKind, ButtonView, ChatBubble, ChatView, CoverLyricsView, LyricsView, TrackView, UiModel,
 };
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
-use crate::settings::model::{Language, LyricsStyle};
+use crate::settings::model::{BackgroundMode, Language, LyricsStyle};
 use crate::settings::paths::Paths;
 use crate::settings::store;
 use crate::settings::{MonitorMode, Settings};
+use crate::settings_window::UpdateView;
 use crate::settings_window::{MonitorInfo, PanelEvent, SettingsWindow};
 use crate::tray::{MenuAction, Tray};
 use crate::ui::anim::Spring;
@@ -41,8 +44,9 @@ use crate::ui::anim::spring_step;
 use crate::ui::chat::{ChatThread, reveal_words};
 use crate::ui::clock::{self, ClockFormat, LocalTime};
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
-use crate::ui::idle::{IdleScheduler, IdleVariant};
+use crate::ui::idle::{IdleScheduler, IdleVariant, WakeGate, wake_distance};
 use crate::ui::layout::{self, Button};
+use crate::update::Release;
 
 /// Second Esc must follow within this window (SPEC §4).
 const DOUBLE_ESC: Duration = Duration::from_millis(600);
@@ -84,6 +88,17 @@ fn monitor_infos(event_loop: &ActiveEventLoop) -> Vec<MonitorInfo> {
 /// Mouse movements below this distance (physical px) are ignored.
 const MOUSE_JITTER: f64 = 2.0;
 
+/// Lyrics style for a digit key 1-9 (main row or numpad, SPEC §4).
+fn digit_style(key: &Key) -> Option<LyricsStyle> {
+    let Key::Character(c) = key else { return None };
+    let mut chars = c.chars();
+    let d = chars.next()?.to_digit(10)?;
+    if chars.next().is_some() {
+        return None;
+    }
+    LyricsStyle::from_digit(d)
+}
+
 fn fmt_time(d: Duration) -> String {
     let s = d.as_secs();
     format!("{}:{:02}.{}", s / 60, s % 60, d.subsec_millis() / 100)
@@ -114,7 +129,27 @@ pub enum UserEvent {
     Media(Box<MediaSnapshot>),
     Cover(Box<CoverResult>),
     Net(Box<NetResult>),
+    /// Update check finished (`silent`: automatic check after start).
+    UpdateChecked {
+        silent: bool,
+        result: Result<Option<Release>, String>,
+    },
+    /// Update downloaded and handed over (quit now) or failed.
+    UpdateInstalled(Result<(), String>),
+    /// Background image decoded for `key` (SPEC §5.1 v1.5).
+    Background {
+        key: BackgroundKey,
+        image: Option<Arc<Image>>,
+    },
+    /// Custom background import finished (file name in the data folder).
+    BackgroundImported(Result<String, ImportError>),
 }
+
+/// What the background shows; a change reloads the image.
+pub type BackgroundKey = (BackgroundMode, Option<String>);
+
+/// Startup update check runs this long after the program start.
+const UPDATE_CHECK_DELAY: Duration = Duration::from_secs(10);
 
 /// What the UI shows for one track.
 #[derive(Debug, Clone)]
@@ -150,6 +185,8 @@ struct UiState {
     /// Lyrics available for the focus view (held while loading).
     focus_lyrics: bool,
     last_activity: Instant,
+    /// Mouse travel needed to leave the idle view (SPEC §5.2 v1.5).
+    wake: WakeGate,
     last_cursor: Option<PhysicalPosition<f64>>,
     /// Pointer position in DIPs on the window it is over.
     pointer: Option<(WindowId, f32, f32)>,
@@ -174,6 +211,7 @@ impl UiState {
             clock: Spring::smooth(1.0, 0.4),
             focus_lyrics: false,
             last_activity: now,
+            wake: WakeGate::default(),
             last_cursor: None,
             pointer: None,
             hover: None,
@@ -202,6 +240,8 @@ struct LyricsUi {
     thread: ChatThread,
     chat_scroll: Spring,
     chat_mix: Spring,
+    /// Constellation view (SPEC §5.4c) blend.
+    stars_mix: Spring,
 }
 
 impl LyricsUi {
@@ -218,6 +258,7 @@ impl LyricsUi {
             thread: ChatThread::new(),
             chat_scroll: Spring::new(0.0, 0.5, 0.86),
             chat_mix: Spring::smooth(0.0, 0.55),
+            stars_mix: Spring::smooth(0.0, 0.55),
         }
     }
 }
@@ -241,6 +282,7 @@ struct UiFrame {
     lyrics_pos: Option<Duration>,
     chat_scroll: f32,
     chat_mix: f32,
+    stars_mix: f32,
 }
 
 pub struct App {
@@ -285,6 +327,16 @@ pub struct App {
     lyrics_ui: LyricsUi,
     /// Formatted clock line, rebuilt when the minute or language changes.
     clock: Option<(LocalTime, Language, String, String)>,
+    /// Background image of the animation monitors and what it was loaded
+    /// for (only while the mode runs).
+    background_image: Option<Arc<Image>>,
+    background_key: Option<BackgroundKey>,
+    /// Localized problem with the last picked background image.
+    image_note: Option<String>,
+    /// Self-update (SPEC §6.5): state, found release, startup check time.
+    update: UpdateView,
+    release: Option<Release>,
+    update_check_due: Option<Instant>,
     monitors: Option<MonitorSignature>,
     next_monitor_check: Instant,
     /// Time of the last rendered frame (render watchdog).
@@ -340,6 +392,12 @@ impl App {
             lyrics: LyricsTracker::default(),
             lyrics_ui: LyricsUi::new(),
             clock: None,
+            background_image: None,
+            background_key: None,
+            image_note: None,
+            update: UpdateView::Idle,
+            release: None,
+            update_check_due: Some(now + UPDATE_CHECK_DELAY),
             monitors: None,
             next_monitor_check: now,
             last_frame: now,
@@ -360,6 +418,9 @@ impl App {
             Err(e) => tracing::error!(error = %e, "hotkey manager unavailable"),
         }
         self.register_hotkey();
+        // Keep the Run entry in sync with the setting and this exe's path.
+        crate::autostart::apply(self.settings.autostart);
+        crate::update::cleanup_old_exe();
 
         let proxy = self.proxy.clone();
         self.cover_worker = Some(CoverWorker::start(move |result| {
@@ -448,6 +509,7 @@ impl App {
         }
         fullscreen::keep_awake(true);
         self.build_windows(event_loop);
+        self.request_background();
         // Grace period for GPU setup before the render watchdog may act.
         self.last_frame = Instant::now() + Duration::from_secs(1);
         if let Some(t) = self.tray.as_mut() {
@@ -467,6 +529,9 @@ impl App {
         self.audio = None;
         self.windows.clear();
         self.gpu = None;
+        // No background image in memory while idle (SPEC §3 idle target).
+        self.background_image = None;
+        self.background_key = None;
         self.monitors = None;
         fullscreen::keep_awake(false);
         self.trim_due = Some(Instant::now() + TRIM_DELAY);
@@ -525,7 +590,7 @@ impl App {
             };
             let size = w.window.inner_size();
             let scale = w.window.scale_factor() as f32;
-            match Surface::new(gpu, hwnd, size.width, size.height, scale) {
+            match Surface::new(gpu, hwnd, size.width, size.height, scale, w.transparent) {
                 Ok(s) => {
                     w.surface = Some(s);
                     w.window.request_redraw();
@@ -619,6 +684,8 @@ impl App {
                     &self.i18n,
                     &self.settings_monitors,
                     self.hotkey_error.as_deref(),
+                    &self.update,
+                    self.image_note.as_deref(),
                 );
                 for e in events {
                     self.on_panel_event(&mut sw, e);
@@ -646,6 +713,9 @@ impl App {
                 sw.set_recording(true, None);
             }
             PanelEvent::RecordFailed(e) => sw.set_recording(true, Some(e)),
+            PanelEvent::CheckUpdates => self.start_update_check(false),
+            PanelEvent::InstallUpdate => self.start_update_install(),
+            PanelEvent::PickBackground => self.pick_background(),
             PanelEvent::CancelRecording => {
                 self.register_hotkey();
                 sw.set_recording(false, None);
@@ -684,11 +754,20 @@ impl App {
                 sw.request_redraw();
             }
         }
-        if new.monitors != old.monitors && self.mode == Mode::Active {
+        // Window layout changes: monitors, transparency (other swap chain
+        // and window style), taskbar (other rectangle).
+        let transparent = |s: &Settings| s.background.mode == BackgroundMode::Transparent;
+        let rebuild = new.monitors != old.monitors
+            || transparent(&new) != transparent(old)
+            || new.background.keep_taskbar != old.background.keep_taskbar;
+        if rebuild && self.mode == Mode::Active {
             self.build_windows(event_loop);
             if let Some(sw) = &self.settings_window {
                 sw.set_topmost(true);
             }
+        }
+        if new.background != old.background {
+            self.request_background();
         }
         let f = (&new.frame, &old.frame);
         if (f.0.color_mode, f.0.palette, f.0.custom_colors)
@@ -704,6 +783,9 @@ impl App {
         if new.lyrics.enabled != old.lyrics.enabled {
             self.restart_lyrics(now);
         }
+        if new.autostart != old.autostart {
+            crate::autostart::apply(new.autostart);
+        }
         if new.hd_cover
             && !old.hd_cover
             && let Some(s) = self.media.session.clone()
@@ -712,6 +794,180 @@ impl App {
             self.request_hd(&s, key);
         }
         self.save_due = Some(now + SAVE_DELAY);
+    }
+
+    // ----- background (SPEC §5.1 v1.5) -----
+
+    fn background_key(&self) -> BackgroundKey {
+        let b = &self.settings.background;
+        let file = (b.mode == BackgroundMode::Image)
+            .then(|| b.image_file.clone())
+            .flatten();
+        (b.mode, file)
+    }
+
+    /// Loads the background image for the current setting off the UI
+    /// thread (only while the mode runs).
+    fn request_background(&mut self) {
+        if self.mode != Mode::Active {
+            return;
+        }
+        let key = self.background_key();
+        if self.background_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.background_key = Some(key.clone());
+        let path = match &key {
+            (BackgroundMode::Wallpaper, _) => crate::background::wallpaper_path(),
+            (BackgroundMode::Image, Some(file)) => Some(self.paths.config_dir.join(file)),
+            _ => None,
+        };
+        let Some(path) = path else {
+            self.background_image = None;
+            return;
+        };
+        let proxy = self.proxy.clone();
+        let spawned = std::thread::Builder::new()
+            .name("background".into())
+            .spawn(move || {
+                let image = crate::background::load(&path);
+                let _ = proxy.send_event(UserEvent::Background { key, image });
+            });
+        if let Err(e) = spawned {
+            tracing::warn!(error = %e, "could not spawn background loader");
+        }
+    }
+
+    /// File dialog for a custom background; the import (size check, copy)
+    /// runs on a worker thread.
+    fn pick_background(&mut self) {
+        let Some(src) = crate::background::pick_file(
+            self.i18n.t("settings.bg_pick_title"),
+            self.i18n.t("settings.bg_filter"),
+        ) else {
+            return;
+        };
+        let dir = self.paths.config_dir.clone();
+        let proxy = self.proxy.clone();
+        let spawned = std::thread::Builder::new()
+            .name("background-import".into())
+            .spawn(move || {
+                let result = crate::background::import(&src, &dir);
+                let _ = proxy.send_event(UserEvent::BackgroundImported(result));
+            });
+        if let Err(e) = spawned {
+            tracing::warn!(error = %e, "could not spawn background import");
+        }
+    }
+
+    fn on_background_imported(
+        &mut self,
+        result: Result<String, ImportError>,
+        event_loop: &ActiveEventLoop,
+    ) {
+        match result {
+            Ok(file) => {
+                self.image_note = None;
+                let old = self.settings.clone();
+                self.settings.background.image_file = Some(file);
+                self.settings.background.mode = BackgroundMode::Image;
+                // Same file name as before: force a reload of the new image.
+                self.background_key = None;
+                self.apply_settings(&old, event_loop);
+            }
+            Err(ImportError::TooSmall { width, height }) => {
+                self.image_note = Some(self.i18n.tf(
+                    "settings.bg_too_small",
+                    &[
+                        ("width", &width.to_string()),
+                        ("height", &height.to_string()),
+                    ],
+                ));
+            }
+            Err(ImportError::Unreadable) => {
+                self.image_note = Some(self.i18n.t("settings.bg_unreadable").to_string());
+            }
+        }
+        if let Some(sw) = &self.settings_window {
+            sw.request_redraw();
+        }
+    }
+
+    // ----- updates (SPEC §6.5 v1.5) -----
+
+    fn start_update_check(&mut self, silent: bool) {
+        if matches!(self.update, UpdateView::Checking | UpdateView::Installing) {
+            return;
+        }
+        if !silent {
+            self.update = UpdateView::Checking;
+        }
+        let proxy = self.proxy.clone();
+        let spawned = std::thread::Builder::new()
+            .name("update-check".into())
+            .spawn(move || {
+                let result = crate::update::check();
+                let _ = proxy.send_event(UserEvent::UpdateChecked { silent, result });
+            });
+        if let Err(e) = spawned {
+            tracing::warn!(error = %e, "could not spawn update check");
+        }
+        if let Some(sw) = &self.settings_window {
+            sw.request_redraw();
+        }
+    }
+
+    fn on_update_checked(&mut self, silent: bool, result: Result<Option<Release>, String>) {
+        match result {
+            Ok(Some(release)) => {
+                let version = release.version_text();
+                tracing::info!(%version, "update available");
+                if silent && let Some(tray) = &self.tray {
+                    tray.notify(
+                        self.i18n.t("notify.update_title"),
+                        &self.i18n.tf("notify.update_body", &[("version", &version)]),
+                    );
+                }
+                self.update = UpdateView::Available(version);
+                self.release = Some(release);
+            }
+            Ok(None) => {
+                tracing::info!("no update available");
+                if !silent {
+                    self.update = UpdateView::UpToDate;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "update check failed");
+                if !silent {
+                    self.update = UpdateView::Failed(e);
+                }
+            }
+        }
+        if let Some(sw) = &self.settings_window {
+            sw.request_redraw();
+        }
+    }
+
+    fn start_update_install(&mut self) {
+        let Some(release) = self.release.clone() else {
+            return;
+        };
+        self.update = UpdateView::Installing;
+        let portable = self.paths.portable;
+        let proxy = self.proxy.clone();
+        let spawned = std::thread::Builder::new()
+            .name("update-install".into())
+            .spawn(move || {
+                let result = crate::update::install(&release, portable);
+                let _ = proxy.send_event(UserEvent::UpdateInstalled(result));
+            });
+        if let Err(e) = spawned {
+            self.update = UpdateView::Failed(e.to_string());
+        }
+        if let Some(sw) = &self.settings_window {
+            sw.request_redraw();
+        }
     }
 
     /// Re-evaluates the lyrics of the current track (setting toggled).
@@ -1010,14 +1266,29 @@ impl App {
     }
 
     fn on_cursor_moved(&mut self, id: WindowId, pos: PhysicalPosition<f64>) {
-        let moved = self
+        let scale = self
+            .windows
+            .iter()
+            .find(|w| w.id() == id)
+            .map_or(1.0, |w| w.window.scale_factor());
+        let dist = self
             .ui
             .last_cursor
-            .is_none_or(|l| (l.x - pos.x).hypot(l.y - pos.y) > MOUSE_JITTER);
+            .map_or(f64::MAX, |l| (l.x - pos.x).hypot(l.y - pos.y));
         self.ui.last_cursor = Some(pos);
-        if moved {
-            self.ui.last_activity = Instant::now();
-            self.set_cursor_hidden(false);
+        if dist > MOUSE_JITTER {
+            // After a long rest only a clear movement wakes (SPEC §5.2 v1.5).
+            let now = Instant::now();
+            let rest = now.saturating_duration_since(self.ui.last_activity);
+            let delay = Duration::from_secs(self.settings.cover_view_delay_s as u64);
+            let needed = wake_distance(rest, delay);
+            // Capped per event: jumps between monitor windows (different
+            // client coordinates) must not count as a large movement.
+            let dip = ((dist / scale) as f32).min(30.0);
+            if self.ui.wake.moved(now, dip, needed) {
+                self.ui.last_activity = now;
+                self.set_cursor_hidden(false);
+            }
         }
         let Some(w) = self.windows.iter().find(|w| w.id() == id) else {
             return;
@@ -1211,7 +1482,13 @@ impl App {
             Some(e) => self.lyrics_ui.chat_scroll.update(now, e.seq as f32),
             None => self.lyrics_ui.chat_scroll.value(),
         };
-        let focus_target = variant == IdleVariant::Focus && self.ui.focus_lyrics && !chat_target;
+        let stars_target = ls.style == LyricsStyle::Constellation && self.ui.focus_lyrics;
+        let stars_mix = self
+            .lyrics_ui
+            .stars_mix
+            .update(now, f32::from(u8::from(stars_target)));
+        let focus_target =
+            variant == IdleVariant::Focus && self.ui.focus_lyrics && !chat_target && !stars_target;
         let focus = self.ui.focus.update(now, f32::from(u8::from(focus_target)));
         let clock = self
             .ui
@@ -1235,6 +1512,7 @@ impl App {
             lyrics_pos,
             chat_scroll,
             chat_mix,
+            stars_mix,
         }
     }
 
@@ -1348,13 +1626,44 @@ impl App {
         })
     }
 
-    /// Key F: classic <-> messages lyrics style (SPEC §4, saved).
-    fn toggle_lyrics_style(&mut self) {
-        let l = &mut self.settings.lyrics;
-        l.style = match l.style {
-            LyricsStyle::Classic => LyricsStyle::Messages,
-            LyricsStyle::Messages => LyricsStyle::Classic,
+    /// Constellation view model (SPEC §5.4c).
+    fn stars_view(&self, frame: &UiFrame) -> Option<StarsView<'_>> {
+        if frame.stars_mix <= 0.0 {
+            return None;
+        }
+        let l = self.lyrics.lyrics()?;
+        let st = frame.line_state?;
+        let text = |i: Option<usize>| {
+            i.and_then(|i| l.lines.get(i))
+                .map_or("", |x| x.text.as_str())
         };
+        let seed = |i: Option<usize>| hash_of((l.id, i));
+        let revealed = match (st.current, frame.lyrics_pos) {
+            (Some(i), Some(pos)) => {
+                let line = &l.lines[i];
+                let next = l.lines.get(i + 1).map(|n| n.time.saturating_sub(line.time));
+                reveal_words(&line.text, pos.saturating_sub(line.time), next)
+            }
+            _ => 0.0,
+        };
+        Some(StarsView {
+            current: text(st.current),
+            current_seed: seed(st.current),
+            revealed,
+            previous: text(self.lyrics_ui.prev_line),
+            previous_seed: seed(self.lyrics_ui.prev_line),
+            change: frame.line_change,
+            gap: st.gap,
+        })
+    }
+
+    /// Keys 1-9: lyrics style by number (SPEC §4 v1.5, saved).
+    fn select_lyrics_style(&mut self, style: LyricsStyle) {
+        let l = &mut self.settings.lyrics;
+        if l.style == style {
+            return;
+        }
+        l.style = style;
         tracing::info!(style = ?l.style, "lyrics style");
         self.save_due = Some(Instant::now() + SAVE_DELAY);
         if let Some(sw) = &self.settings_window {
@@ -1469,6 +1778,13 @@ impl App {
             focus: frame.focus,
             chat: self.chat_view(&frame, now),
             chat_mix: frame.chat_mix,
+            stars: self.stars_view(&frame),
+            stars_mix: frame.stars_mix,
+            background: self.background_image.as_ref(),
+            background_dim: match self.settings.background.mode {
+                BackgroundMode::Black => 0.0,
+                _ => self.settings.background.dim as f32 / 100.0,
+            },
             clock: frame.clock,
             clock_time: self.clock.as_ref().map_or("", |c| c.2.as_str()),
             clock_date: self.clock.as_ref().map_or("", |c| c.3.as_str()),
@@ -1556,6 +1872,26 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Media(snapshot) => self.on_media(*snapshot),
             UserEvent::Cover(result) => self.on_cover(*result),
             UserEvent::Net(result) => self.on_net(*result),
+            UserEvent::UpdateChecked { silent, result } => self.on_update_checked(silent, result),
+            UserEvent::UpdateInstalled(Ok(())) => {
+                tracing::info!("update handed over to the installer, quitting");
+                self.quit(event_loop);
+            }
+            UserEvent::UpdateInstalled(Err(e)) => {
+                tracing::warn!(error = %e, "update failed");
+                self.update = UpdateView::Failed(e);
+                if let Some(sw) = &self.settings_window {
+                    sw.request_redraw();
+                }
+            }
+            UserEvent::Background { key, image } => {
+                if self.mode == Mode::Active && self.background_key.as_ref() == Some(&key) {
+                    self.background_image = image;
+                }
+            }
+            UserEvent::BackgroundImported(result) => {
+                self.on_background_imported(result, event_loop);
+            }
         }
     }
 
@@ -1587,9 +1923,11 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed
                     && !event.repeat
-                    && matches!(&event.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("f")) =>
+                    && digit_style(&event.logical_key).is_some() =>
             {
-                self.toggle_lyrics_style();
+                if let Some(style) = digit_style(&event.logical_key) {
+                    self.select_lyrics_style(style);
+                }
             }
             #[cfg(debug_assertions)]
             WindowEvent::KeyboardInput { event, .. }
@@ -1637,6 +1975,10 @@ impl ApplicationHandler<UserEvent> for App {
         if self.save_due.is_some_and(|t| now >= t) {
             self.save_settings_now();
         }
+        if self.update_check_due.is_some_and(|t| now >= t) {
+            self.update_check_due = None;
+            self.start_update_check(true);
+        }
         if self.trim_due.is_some_and(|t| now >= t) {
             self.trim_due = None;
             if self.mode == Mode::Idle && self.settings_window.is_none() {
@@ -1671,6 +2013,7 @@ impl ApplicationHandler<UserEvent> for App {
             rendering.then_some(self.last_frame + RENDER_WATCHDOG),
             self.save_due,
             self.trim_due,
+            self.update_check_due,
             repaint.filter(|t| *t > now),
         ];
         match deadlines.into_iter().flatten().min() {
