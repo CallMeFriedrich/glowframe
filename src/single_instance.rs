@@ -68,6 +68,12 @@ pub fn acquire() -> Option<Instance> {
 pub fn signal_primary() -> bool {
     // SAFETY: the handle is closed right after use.
     unsafe {
+        // This process was started by the user and may hand the foreground
+        // on; without it Windows keeps the primary's settings window behind
+        // other windows (focus-stealing prevention).
+        let _ = windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+            windows::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+        );
         match OpenEventW(
             EVENT_MODIFY_STATE,
             false,
