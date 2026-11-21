@@ -180,6 +180,9 @@ pub struct UiModel<'a> {
     pub stars_mix: f32,
     /// Background image (wallpaper or custom) and black dimming 0..1.
     pub background: Option<&'a Arc<Image>>,
+    /// Live wallpaper frame and the part of it behind this monitor (in
+    /// bitmap pixels); takes precedence over `background`.
+    pub live_background: Option<(&'a ID2D1Bitmap1, Rect)>,
     pub background_dim: f32,
     /// Clock line visibility 0..1 (setting, faded).
     pub clock: f32,
@@ -1096,7 +1099,20 @@ pub fn draw_background(
     unsafe { ctx.Clear(Some(&clear)) };
     let intro = m.intro.clamp(0.0, 1.0);
     let mut has_content = transparent;
-    if let Some(img) = m.background
+    if let Some((bitmap, src)) = m.live_background {
+        // SAFETY: drawing between BeginDraw/EndDraw.
+        unsafe {
+            ctx.DrawBitmap(
+                bitmap,
+                Some(&d2d_rect(Rect::new(0.0, 0.0, w, h))),
+                intro,
+                D2D1_INTERPOLATION_MODE_LINEAR,
+                Some(&d2d_rect(src)),
+                None,
+            );
+        }
+        has_content = true;
+    } else if let Some(img) = m.background
         && let Some(brush) = res.bitmap_brush(ctx, img)
     {
         // "cover": fill the screen, crop the overflow, keep the aspect.

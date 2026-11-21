@@ -6,7 +6,8 @@ use windows::Win32::Graphics::Direct2D::Common::{
 };
 
 use super::*;
-use crate::ui::stars::{positions, word_progress};
+use crate::ui::anim::spring_step;
+use crate::ui::stars::positions;
 
 pub(super) struct StarFormats {
     word: IDWriteTextFormat,
@@ -43,9 +44,20 @@ fn sizes(h: f32) -> (f32, f32) {
     (small, small * 1.55)
 }
 
-/// Area the constellation spreads over.
-fn area(w: f32, h: f32) -> Rect {
-    Rect::new(w * 0.12, h * 0.28, w * 0.76, h * 0.42)
+/// Seconds of spring time per revealed word (words are revealed in word
+/// units; this turns them into spring time for the pop and line growth).
+const WORD_SECS: f32 = 0.6;
+
+/// Spring progress of word `k`: (star pop with overshoot, line growth).
+fn word_springs(revealed: f32, k: usize) -> (f32, f32) {
+    let t = (revealed - k as f32).max(0.0) * WORD_SECS;
+    if revealed <= 0.0 && k == 0 {
+        return (0.0, 0.0);
+    }
+    (
+        spring_step(t, 0.42, 0.6),
+        spring_step(t, 0.5, 0.92).min(1.0),
+    )
 }
 
 /// Words of a line (whitespace separated).
@@ -115,11 +127,11 @@ fn constellation(
     let res = p.res;
     let (w, h) = res.size;
     let words = words(text);
-    let pos = positions(words.len(), seed);
-    let a = area(w, h);
+    // Random points of the whole screen, new pattern per line.
+    let pos = positions(words.len(), seed, w / h.max(1.0));
     let at = |i: usize| {
         let (u, v) = pos[i];
-        (a.x + u * a.w, a.y + v * a.h)
+        (u * w, v * h)
     };
     let [r, g, b] = accent;
     let star_r = h * 0.0085;
@@ -127,7 +139,7 @@ fn constellation(
 
     // Lines first, so stars sit on top.
     for k in 1..words.len() {
-        let t = word_progress(revealed, k);
+        let t = word_springs(revealed, k).1;
         if t <= 0.0 {
             continue;
         }
@@ -151,17 +163,15 @@ fn constellation(
 
     let (small, big) = sizes(h);
     for (k, word) in words.iter().enumerate() {
-        let t = if k == 0 {
-            word_progress(revealed.max(0.0), 0).max(if revealed > 0.0 { 1.0 } else { 0.0 })
-        } else {
-            word_progress(revealed, k)
-        };
-        if t <= 0.0 {
+        // Pop with a little overshoot; fully opaque early in the pop.
+        let pop = word_springs(revealed, k).0;
+        if pop <= 0.0 {
             continue;
         }
+        let t = (pop * 2.5).clamp(0.0, 1.0);
         let (x, y) = at(k);
         let is_current = current == Some(k);
-        let rad = star_r * if is_current { 1.7 } else { 1.0 } * (0.55 + 0.45 * t);
+        let rad = star_r * if is_current { 1.7 } else { 1.0 } * pop.max(0.0);
         let a = alpha * t * if is_current { 1.0 } else { 0.78 };
         if is_current {
             p.circle(x, y, rad * 2.4, color(r, g, b, 0.18 * a));

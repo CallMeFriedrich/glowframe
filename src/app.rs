@@ -26,6 +26,7 @@ use crate::lyrics::lrc::{self, LineState};
 use crate::lyrics::{LyricsTracker, state_at};
 use crate::media::{Command, MediaService, MediaSnapshot, Playback, RepeatMode, Session};
 use crate::net::{NetJob, NetResult, NetWorker};
+use crate::render::capture::DesktopCapture;
 use crate::render::ui::StarsView;
 use crate::render::ui::{
     BubbleKind, ButtonView, ChatBubble, ChatView, CoverLyricsView, LyricsView, TrackView, UiModel,
@@ -331,6 +332,9 @@ pub struct App {
     /// for (only while the mode runs).
     background_image: Option<Arc<Image>>,
     background_key: Option<BackgroundKey>,
+    /// Live wallpaper capture (Wallpaper Engine & co.), declared before
+    /// `gpu` users are dropped; only while the mode runs.
+    desktop_capture: Option<DesktopCapture>,
     /// Localized problem with the last picked background image.
     image_note: Option<String>,
     /// Self-update (SPEC §6.5): state, found release, startup check time.
@@ -394,6 +398,7 @@ impl App {
             clock: None,
             background_image: None,
             background_key: None,
+            desktop_capture: None,
             image_note: None,
             update: UpdateView::Idle,
             release: None,
@@ -421,6 +426,7 @@ impl App {
         // Keep the Run entry in sync with the setting and this exe's path.
         crate::autostart::apply(self.settings.autostart);
         crate::update::cleanup_old_exe();
+        crate::render::capture::restore_icons_after_crash(&self.icons_marker());
 
         let proxy = self.proxy.clone();
         self.cover_worker = Some(CoverWorker::start(move |result| {
@@ -527,6 +533,8 @@ impl App {
         tracing::info!("mode: idle");
         self.mode = Mode::Idle;
         self.audio = None;
+        // Capture first: it uses the GPU device and restores the icons.
+        self.desktop_capture = None;
         self.windows.clear();
         self.gpu = None;
         // No background image in memory while idle (SPEC §3 idle target).
@@ -602,11 +610,15 @@ impl App {
 
     fn device_lost(&mut self) {
         tracing::warn!("recreating GPU resources");
+        self.desktop_capture = None;
         for w in &mut self.windows {
             w.surface = None;
         }
         self.gpu = None;
         self.ensure_surfaces();
+        // The live capture belongs to the old device: start it again.
+        self.background_key = None;
+        self.request_background();
     }
 
     fn check_monitors(&mut self, event_loop: &ActiveEventLoop) {
@@ -798,6 +810,11 @@ impl App {
 
     // ----- background (SPEC §5.1 v1.5) -----
 
+    /// Exists while desktop icons are hidden for the live wallpaper.
+    fn icons_marker(&self) -> std::path::PathBuf {
+        self.paths.config_dir.join("icons_hidden")
+    }
+
     fn background_key(&self) -> BackgroundKey {
         let b = &self.settings.background;
         let file = (b.mode == BackgroundMode::Image)
@@ -817,6 +834,23 @@ impl App {
             return;
         }
         self.background_key = Some(key.clone());
+        self.desktop_capture = None;
+        // Live wallpaper (Wallpaper Engine & co.) first, static image else.
+        if key.0 == BackgroundMode::Wallpaper
+            && let Some(gpu) = &self.gpu
+        {
+            match DesktopCapture::start(gpu, self.icons_marker()) {
+                Ok(Some(c)) => {
+                    self.desktop_capture = Some(c);
+                    self.background_image = None;
+                    return;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "live wallpaper capture failed, using the image")
+                }
+            }
+        }
         let path = match &key {
             (BackgroundMode::Wallpaper, _) => crate::background::wallpaper_path(),
             (BackgroundMode::Image, Some(file)) => Some(self.paths.config_dir.join(file)),
@@ -1733,6 +1767,22 @@ impl App {
         }
         let frame = self.ui_tick(now);
         self.update_clock();
+        // Newest live wallpaper frame (shared by all monitors).
+        if let (Some(c), Some(gpu)) = (self.desktop_capture.as_mut(), self.gpu.as_ref()) {
+            c.poll(gpu);
+        }
+        // Part of the captured desktop behind this window (physical pixels).
+        let live_src = self.desktop_capture.as_ref().and_then(|c| {
+            let w = self.windows.iter().find(|w| w.id() == id)?;
+            let (ox, oy) = c.origin();
+            let (pos, size) = w.rect;
+            Some(layout::Rect::new(
+                (pos.x - ox) as f32,
+                (pos.y - oy) as f32,
+                size.width as f32,
+                size.height as f32,
+            ))
+        });
 
         let Some((size, size_dip)) = self
             .windows
@@ -1781,6 +1831,11 @@ impl App {
             stars: self.stars_view(&frame),
             stars_mix: frame.stars_mix,
             background: self.background_image.as_ref(),
+            live_background: self
+                .desktop_capture
+                .as_ref()
+                .and_then(|c| c.bitmap())
+                .zip(live_src),
             background_dim: match self.settings.background.mode {
                 BackgroundMode::Black => 0.0,
                 _ => self.settings.background.dim as f32 / 100.0,

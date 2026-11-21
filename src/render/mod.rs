@@ -1,5 +1,6 @@
 //! D3D11 + D2D rendering for animation monitors (SPEC §3, §5).
 
+pub mod capture;
 pub mod gpu;
 pub mod surface;
 pub mod ui;

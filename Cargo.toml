@@ -26,6 +26,12 @@ ureq = { version = "3.5.2", default-features = false, features = ["native-tls-no
 windows = { version = "0.62.2", features = [
     "Foundation",
     "Foundation_Collections",
+    "Graphics",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+    "Win32_System_WinRT_Direct3D11",
     "Media",
     "Media_Control",
     "Storage_Streams",

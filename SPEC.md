@@ -95,6 +95,7 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - **Hintergrund (v1.5, nur Animations-Monitore):**
   - **Schwarz** (Standard).
   - **Windows-Hintergrundbild:** das aktuelle Desktop-Hintergrundbild wird als Hintergrund gezeichnet („cover“-skaliert).
+    - **Live-Wallpaper (Wallpaper Engine, Lively u. ä.):** Hängen sichtbare Fenster unter dem Desktop (`WorkerW` unter `Progman` bzw. eigenes `WorkerW`), wird der Desktop per Windows Graphics Capture live mitgeschnitten (ohne gelben Rahmen, ohne Mauszeiger) und pro Monitor der passende Ausschnitt gezeichnet. Die Desktop-Symbole werden dafür während des Modus ausgeblendet und danach wieder eingeblendet (auch nach einem Absturz beim nächsten Start). Wallpaper Engine muss „Andere Anwendung im Vollbild“ auf „Weiter abspielen“ stehen haben, sonst steht das Bild still. Schlägt die Aufnahme fehl, wird das statische Hintergrundbild verwendet.
   - **Eigenes Bild:** vom Nutzer gewählt (PNG/JPEG/BMP/WebP über WIC), Mindestauflösung 2560×1440; kleinere Bilder werden mit Hinweis abgelehnt. Das Bild wird in die App-Daten kopiert (`…\Glowframe\background.*`).
   - **Durchsichtig:** Das Fenster ist echt transparent (DirectComposition, Swapchain mit Alpha); man sieht alles dahinter (Desktop, offene Fenster). Eingaben gehen weiter an Glowframe.
   - **Abdunkeln:** 0–90 %, Standard 50 %; legt Schwarz über Bild bzw. Durchsicht, damit Rahmen und Text lesbar bleiben.
@@ -167,8 +168,8 @@ Lyrics als Chatverlauf im Stil von iMessage (dunkles Design). Ruhe-Ansicht im Ly
 
 ### 5.4c Sternbild-Ansicht (v1.5)
 Lyrics als Sternbild: Ruhe-Ansicht im Lyrics-Stil „Sternbild“, nur mit synchronisierten Lyrics.
-- Jedes Wort der aktuellen Zeile ist ein kleiner vierzackiger Stern mit dem Wort darunter bzw. darüber, im Zickzack über die Bildschirmmitte verteilt (Positionen pro Zeile deterministisch aus dem Text, sodass sich nichts überlappt).
-- Die Wörter erscheinen nacheinander (Zeit bis zur nächsten Zeile nach Wortlänge verteilt, wie §5.4b); jeder neue Stern wird mit einer dünnen Linie vom vorherigen aus verbunden, die Linie wächst per Feder hin.
+- Jedes Wort der aktuellen Zeile ist ein kleiner vierzackiger Stern mit dem Wort darunter. Die Sterne liegen an **zufälligen Punkten auf dem ganzen Bildschirm** (jede Zeile ein neues Muster; außerhalb der Uhr und der Ränder), mit Regeln für ein sauberes Bild: Mindestabstand zwischen Sternen, Verbindungslinien mit begrenzter Länge und **ohne Überkreuzungen**.
+- Die Wörter erscheinen nacheinander (Zeit bis zur nächsten Zeile nach Wortlänge verteilt, wie §5.4b); jeder neue Stern poppt per Feder mit leichtem Überschwingen auf, die Linie vom vorherigen Stern wächst per Feder zu ihm hin.
 - Das aktuelle Wort ist größer und heller mit leichtem Schein; ältere Sterne und Linien sind gedimmt. Farbe: erste Palettenfarbe (Akzent).
 - Zeilenwechsel: das alte Sternbild blendet aus und driftet leicht, das neue baut sich auf. Instrumentale Lücken: pulsierende Punkte.
 
