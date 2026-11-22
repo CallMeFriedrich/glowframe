@@ -30,7 +30,7 @@ use crate::render::capture::DesktopCapture;
 use crate::render::ui::{
     BubbleKind, ButtonView, ChatBubble, ChatView, CoverLyricsView, LyricsView, TrackView, UiModel,
 };
-use crate::render::ui::{ChainStar, ChainView, CodeView, StarsView};
+use crate::render::ui::{ChainStar, ChainView, CodeView, StarsView, WordView};
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
 use crate::settings::model::{BackgroundMode, Language, LyricsStyle};
@@ -42,7 +42,7 @@ use crate::settings_window::{MonitorInfo, PanelEvent, SettingsWindow};
 use crate::tray::{MenuAction, Tray};
 use crate::ui::anim::Spring;
 use crate::ui::anim::spring_step;
-use crate::ui::chain::StarChain;
+use crate::ui::chain::{ChainWord, StarChain, chain_words};
 use crate::ui::chat::{ChatThread, reveal_words};
 use crate::ui::clock::{self, ClockFormat, LocalTime};
 use crate::ui::code::{Camera, CameraView, CodeDoc};
@@ -268,6 +268,9 @@ struct LyricsUi {
     code_cam: Camera,
     code_mix: Spring,
     code_t: f32,
+    /// One-word view (SPEC §5.4f): words of the current lyrics and blend.
+    words: Option<(u64, Vec<ChainWord>)>,
+    word_mix: Spring,
 }
 
 impl LyricsUi {
@@ -292,6 +295,8 @@ impl LyricsUi {
             code_cam: Camera::default(),
             code_mix: Spring::smooth(0.0, 0.55),
             code_t: 0.0,
+            words: None,
+            word_mix: Spring::smooth(0.0, 0.45),
         }
     }
 }
@@ -321,6 +326,9 @@ struct UiFrame {
     chain_mix: f32,
     code_mix: f32,
     code_cam: Option<CameraView>,
+    word_mix: f32,
+    /// Index of the word shown in the one-word view.
+    word: Option<usize>,
 }
 
 pub struct App {
@@ -1611,12 +1619,36 @@ impl App {
                 code_cam = Some(self.lyrics_ui.code_cam.update(now, doc.id, focus, aspect));
             }
         }
+        let word_target = ls.style == LyricsStyle::OneWord && self.ui.focus_lyrics;
+        let word_mix = self
+            .lyrics_ui
+            .word_mix
+            .update(now, f32::from(u8::from(word_target)));
+        let mut word = None;
+        if (word_target || word_mix > 0.0)
+            && let (Some(l), Some(pos)) = (&found, lyrics_pos)
+        {
+            if self
+                .lyrics_ui
+                .words
+                .as_ref()
+                .is_none_or(|(id, _)| *id != l.id)
+            {
+                self.lyrics_ui.words = Some((l.id, chain_words(&l.lines)));
+            }
+            word = self
+                .lyrics_ui
+                .words
+                .as_ref()
+                .and_then(|(_, w)| crate::ui::word::current_word(w, pos));
+        }
         let focus_target = variant == IdleVariant::Focus
             && self.ui.focus_lyrics
             && !chat_target
             && !stars_target
             && !chain_target
-            && !code_target;
+            && !code_target
+            && !word_target;
         let focus = self.ui.focus.update(now, f32::from(u8::from(focus_target)));
         let clock = self
             .ui
@@ -1657,6 +1689,8 @@ impl App {
             chain_mix,
             code_mix,
             code_cam,
+            word_mix,
+            word,
         }
     }
 
@@ -1908,6 +1942,27 @@ impl App {
         }
     }
 
+    /// One-word view model (SPEC §5.4f): the word and its colors.
+    fn word_view(&self, frame: &UiFrame, now: Instant) -> Option<WordView<'_>> {
+        if frame.word_mix <= 0.0 {
+            return None;
+        }
+        let (_, words) = self.lyrics_ui.words.as_ref()?;
+        let colors = crate::ui::word::word_colors(self.palette_srgb(now));
+        let k = frame.word;
+        let color = colors[k.map_or(0, |k| k % colors.len())];
+        let gap = frame.line_state.is_some_and(|s| s.gap);
+        Some(WordView {
+            text: k
+                .filter(|_| !gap)
+                .and_then(|k| words.get(k))
+                .map_or("", |w| crate::ui::word::display(&w.text)),
+            color,
+            background: crate::ui::word::invert(color),
+            gap,
+        })
+    }
+
     /// The three palette stops in sRGB (code view syntax colors).
     fn palette_srgb(&self, now: Instant) -> [[f32; 3]; 3] {
         self.animator.current_stops(now).map(|c| {
@@ -2026,6 +2081,8 @@ impl App {
                     cam,
                 }),
             code_mix: frame.code_mix,
+            one_word: self.word_view(&frame, now),
+            one_word_mix: frame.word_mix,
             palette: self.palette_srgb(now),
             background: self.background_image.as_ref(),
             live_background: self

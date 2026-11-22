@@ -29,7 +29,10 @@ beat, with a player view, a large cover view and line-synced lyrics.
   words across lines with keywords drawn larger, and **5** code, where the
   lyrics are typed like code in an editor while the camera follows the cursor,
   flies back to the chorus when it repeats and sometimes looks at the code
-  from the side.
+  from the side, and **6** one word, a single big word at a time on a
+  full-screen background in the inverted color, switching hard with every
+  word. *Photosensitivity warning:* this style flashes the whole screen
+  several times per second.
 - **Record:** for songs without lyrics, every other song (at random) shows a
   spinning vinyl record with the cover as its label instead of the cover.
 - **Backgrounds:** black, your Windows wallpaper, your own image (at least

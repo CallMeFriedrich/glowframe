@@ -72,7 +72,7 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - **Alternativen:** der Hotkey oder Tray → Stoppen.
 
 ### Zifferntasten 1–9 (v1.5, ersetzt Taste F aus v1.3)
-- Wählen im laufenden Modus den Lyrics-Stil direkt: **1** Klassisch, **2** Nachrichten (§5.4b), **3** Sternbild (§5.4c), **4** Sternbild V2 (§5.4c2), **5** Code (§5.4e). Weitere Stile bekommen die nächsten Ziffern bis 9; unbelegte Ziffern tun nichts.
+- Wählen im laufenden Modus den Lyrics-Stil direkt: **1** Klassisch, **2** Nachrichten (§5.4b), **3** Sternbild (§5.4c), **4** Sternbild V2 (§5.4c2), **5** Code (§5.4e), **6** Ein Wort (§5.4f). Weitere Stile bekommen die nächsten Ziffern bis 9; unbelegte Ziffern tun nichts.
 - Die Wahl wird gespeichert und ist auch in den Einstellungen änderbar (§7).
 
 ### Einzelinstanz
@@ -189,6 +189,13 @@ Lyrics-Stil „Code“ (Taste 5): Die Lyrics werden wie Code in einem Editor get
 - **Refrain-Wiederholung:** wird nicht neu getippt. Am Dateiende erscheint ein Aufruf `chorus();`, die Kamera springt zur vorhandenen Funktion und hebt die Zeilen beim Singen Wort für Wort hervor.
 - **Kamera:** eng am Cursor (etwa 8 Zeilen sichtbar), folgt per Feder und neigt sich leicht in Tipprichtung. **3D:** pro Abschnitt gewürfelt schaut etwa jeder zweite Abschnitt von der Seite (40°, links oder rechts, manchmal zusätzlich leicht von unten/oben) perspektivisch auf die Code-Ebene; der Winkel wechselt per Feder mit dem Abschnitt. In der Schrägansicht wird nichts hart abgeschnitten: Die Code-Ebene blendet zu den Rändern des Editors weich aus, die ferne Seite wird zusätzlich abgedunkelt. Beim Abschnittswechsel: liegt das Ziel nah, ein schneller Schwenk; liegt es weit weg, zoomt sie heraus (ganze Datei sichtbar), fliegt hin und zoomt wieder ein (~1,5 s).
 - Alles hängt an der Songposition: Pause hält das Tippen an, Spulen springt an die passende Stelle.
+
+### 5.4f Ein-Wort-Ansicht (v1.6)
+Lyrics-Stil „Ein Wort“ (Taste 6): Ruhe-Ansicht, nur mit synchronisierten Lyrics.
+- Immer nur **ein Wort** groß und fett in der Mitte (Satzzeichen am Rand entfernt). Lange Wörter werden verkleinert, bis sie in die Breite passen. Die Wortzeiten werden wie in §5.4b über die Zeile verteilt.
+- **Farben:** Jedes Wort bekommt die nächste Farbe aus einer Reihe, der **ganze Bildschirm** die invertierte Farbe (weißes Wort auf Schwarz, schwarzes auf Weiß, Rot auf Cyan …). Der Leuchtrahmen ist dabei verdeckt. Die Reihe besteht aus Weiß und den Cover-Farben; liefert das Cover wenige unterschiedliche Farben, kommen farbtonverschobene Varianten der Hauptfarbe dazu. Mittlere Töne werden aufgehellt oder abgedunkelt, damit Wort und Hintergrund immer deutlich kontrastieren.
+- **Wechsel:** harter Schnitt bei jedem Wort, ohne Begrenzung der Wechselrate (Wunsch des Projektinhabers; Hinweis zu Lichtempfindlichkeit im README).
+- Die Uhrzeile bleibt oben, in der Wortfarbe. Instrumentale Lücken: pulsierende Punkte in der aktuellen Wortfarbe.
 
 ### 5.4d Schallplatte (v1.6)
 Abwechslung für Songs **ohne Lyrics** (keine gefunden, Werbung oder Lyrics ausgeschaltet).
@@ -315,7 +322,7 @@ Abwechslung für Songs **ohne Lyrics** (keine gefunden, Werbung oder Lyrics ausg
 | Lyrics | Lyrics anzeigen | an/aus (Hauptschalter) | an |
 | Lyrics | In Player-Ansicht | an/aus | an |
 | Lyrics | In Cover-Ansicht | an/aus | an |
-| Lyrics | Stil (v1.3/v1.5, auch per Zifferntaste 1–9) | Klassisch / Nachrichten / Sternbild / Sternbild V2 / Code | Klassisch |
+| Lyrics | Stil (v1.3/v1.5, auch per Zifferntaste 1–9) | Klassisch / Nachrichten / Sternbild / Sternbild V2 / Code / Ein Wort | Klassisch |
 | Lyrics (erweitert) | Versatz | −2000 … +2000 ms | 0 |
 | Cover | HD-Cover laden | an/aus | an |
 

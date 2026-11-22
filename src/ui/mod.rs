@@ -10,3 +10,4 @@ pub mod idle;
 pub mod layout;
 pub mod stars;
 pub mod vinyl;
+pub mod word;

@@ -297,6 +297,11 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                                 LyricsStyle::Code,
                                 i18n.t("settings.style_code"),
                             );
+                            ui.radio_value(
+                                &mut l.style,
+                                LyricsStyle::OneWord,
+                                i18n.t("settings.style_word"),
+                            );
                         });
                     });
                     egui::CollapsingHeader::new(i18n.t("settings.advanced"))

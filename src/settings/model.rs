@@ -121,16 +121,20 @@ pub enum LyricsStyle {
     ConstellationV2,
     /// Code editor (SPEC §5.4e).
     Code,
+    /// One word at a time on inverted colors (SPEC §5.4f).
+    #[serde(rename = "word")]
+    OneWord,
 }
 
 impl LyricsStyle {
     /// In key order: digit 1 selects `ALL[0]` and so on (SPEC §4).
-    pub const ALL: [LyricsStyle; 5] = [
+    pub const ALL: [LyricsStyle; 6] = [
         LyricsStyle::Classic,
         LyricsStyle::Messages,
         LyricsStyle::Constellation,
         LyricsStyle::ConstellationV2,
         LyricsStyle::Code,
+        LyricsStyle::OneWord,
     ];
 
     pub fn from_digit(d: u32) -> Option<Self> {
@@ -318,7 +322,8 @@ mod tests {
             Some(LyricsStyle::ConstellationV2)
         );
         assert_eq!(LyricsStyle::from_digit(5), Some(LyricsStyle::Code));
-        assert_eq!(LyricsStyle::from_digit(6), None);
+        assert_eq!(LyricsStyle::from_digit(6), Some(LyricsStyle::OneWord));
+        assert_eq!(LyricsStyle::from_digit(7), None);
         assert_eq!(LyricsStyle::from_digit(0), None);
         let mut s = s;
         s.background.dim = 200;

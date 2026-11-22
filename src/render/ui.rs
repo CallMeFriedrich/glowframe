@@ -25,6 +25,16 @@ mod code;
 mod stars;
 mod vinyl;
 
+/// One-word view (SPEC §5.4f).
+pub struct WordView<'a> {
+    pub text: &'a str,
+    /// Word color; the whole screen gets `background` (its inverse).
+    pub color: [f32; 3],
+    pub background: [f32; 3],
+    /// Instrumental gap: pulsing dots instead of the word.
+    pub gap: bool,
+}
+
 /// Code view (SPEC §5.4e).
 pub struct CodeView<'a> {
     pub doc: &'a crate::ui::code::CodeDoc,
@@ -226,6 +236,9 @@ pub struct UiModel<'a> {
     /// Code view (SPEC §5.4e) and its blend.
     pub code: Option<CodeView<'a>>,
     pub code_mix: f32,
+    /// One-word view (SPEC §5.4f) and its blend.
+    pub one_word: Option<WordView<'a>>,
+    pub one_word_mix: f32,
     /// The three palette stops in sRGB 0..1 (code view syntax colors).
     pub palette: [[f32; 3]; 3],
     /// Background image (wallpaper or custom) and black dimming 0..1.
@@ -285,6 +298,9 @@ pub struct UiResources {
     stars: stars::StarFormats,
     corner: vinyl::CornerFormats,
     code: code::CodeRes,
+    /// One-word view: big bold word.
+    big_word: IDWriteTextFormat,
+    big_word_size: f32,
     factory: ID2D1Factory,
     brush: ID2D1SolidColorBrush,
     /// Extra brushes for word-by-word reveal (drawing effects).
@@ -440,6 +456,14 @@ impl UiResources {
                 stars: stars::StarFormats::new(dwrite, &ui_font, h)?,
                 corner: vinyl::CornerFormats::new(dwrite, &ui_font, h)?,
                 code: code::CodeRes::new(dwrite, ctx, &ui_font, h)?,
+                big_word: fmt(
+                    &ui_font,
+                    DWRITE_FONT_WEIGHT_BOLD,
+                    (0.2 * h).clamp(48.0, 420.0),
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+                    false,
+                )?,
+                big_word_size: (0.2 * h).clamp(48.0, 420.0),
                 factory: ctx.GetFactory()?,
                 brush: ctx.CreateSolidColorBrush(&white, None)?,
                 brush_hi: ctx.CreateSolidColorBrush(&white, None)?,
@@ -1301,7 +1325,13 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     } else {
         0.0
     };
-    let idle_a = view * content * (1.0 - chat_mix - stars_mix - chain_mix - code_mix).max(0.0);
+    let word_mix = if m.one_word.is_some() {
+        m.one_word_mix.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let idle_a =
+        view * content * (1.0 - chat_mix - stars_mix - chain_mix - code_mix - word_mix).max(0.0);
     if idle_a > 0.0 {
         let base = cover_transform(m, w, h);
         p.set_transform(&base);
@@ -1383,10 +1413,21 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     {
         code::draw(&p, m, c, &cover_transform(m, w, h), code_a);
     }
+    // ----- one-word view (SPEC §5.4f) -----
+    let word_a = view * content * word_mix;
+    let mut clock_rgb = [1.0, 1.0, 1.0];
+    if word_a > 0.0
+        && let Some(v) = &m.one_word
+    {
+        p.set_transform(&scale_about(1.0, 0.0, 0.0));
+        draw_one_word(&p, m, v, word_a);
+        // The clock takes the word color over the colored background.
+        clock_rgb = std::array::from_fn(|i| 1.0 + (v.color[i] - 1.0) * word_a);
+    }
     p.set_transform(&scale_about(1.0, 0.0, 0.0));
 
     // ----- clock -----
-    draw_clock(&p, m, intro * m.clock.clamp(0.0, 1.0));
+    draw_clock(&p, m, intro * m.clock.clamp(0.0, 1.0), clock_rgb);
 
     // ----- Esc hint -----
     if let Some((text, a)) = m.esc_hint
@@ -1421,7 +1462,8 @@ fn translate(dx: f32, dy: f32) -> Matrix3x2 {
 
 /// Clock line at the top center in the style of the iOS lock screen:
 /// bold time, smaller dimmed date, sharing one baseline.
-fn draw_clock(p: &Painter, m: &UiModel, alpha: f32) {
+fn draw_clock(p: &Painter, m: &UiModel, alpha: f32, rgb: [f32; 3]) {
+    let [cr, cg, cb] = rgb;
     if alpha <= 0.0 {
         return;
     }
@@ -1438,13 +1480,13 @@ fn draw_clock(p: &Painter, m: &UiModel, alpha: f32) {
     let x = (w - total) / 2.0;
     // Digits are ~0.7 em tall: center them on `cy`.
     let baseline = cy + size * 0.35;
-    p.layout_at(&time, x, baseline - tb, color(1.0, 1.0, 1.0, 0.94 * alpha));
+    p.layout_at(&time, x, baseline - tb, color(cr, cg, cb, 0.94 * alpha));
     if let Some((dl, _, db)) = date {
         p.layout_at(
             &dl,
             x + tw + gap,
             baseline - db,
-            color(1.0, 1.0, 1.0, 0.62 * alpha),
+            color(cr, cg, cb, 0.62 * alpha),
         );
     }
 }
@@ -1490,4 +1532,48 @@ fn draw_buttons(p: &Painter, m: &UiModel, alpha: f32) {
             );
         }
     }
+}
+
+/// One-word view (SPEC §5.4f): the whole screen in the background color,
+/// one big word in the middle; hard cuts, no animation per word.
+fn draw_one_word(p: &Painter, m: &UiModel, v: &WordView, alpha: f32) {
+    let (w, h) = p.res.size;
+    let [br, bg, bb] = v.background;
+    let [r, g, b] = v.color;
+    p.rounded(Rect::new(0.0, 0.0, w, h), 0.0, color(br, bg, bb, alpha));
+    if v.gap {
+        let size = (0.05 * h).clamp(20.0, 90.0);
+        let c = color(r, g, b, alpha);
+        for i in 0..3 {
+            let phase = (m.time * 2.4 - i as f32 * 0.5).sin() * 0.5 + 0.5;
+            let x = w / 2.0 + (i as f32 - 1.0) * size * 0.9;
+            p.circle(
+                x,
+                h / 2.0,
+                size * 0.22 * (0.7 + 0.3 * phase),
+                color(c.r, c.g, c.b, c.a * (0.4 + 0.6 * phase)),
+            );
+        }
+        return;
+    }
+    if v.text.is_empty() {
+        return;
+    }
+    // Long words shrink until they fit the width.
+    let format = &p.res.big_word;
+    let size = p.res.big_word_size;
+    let Some((_, width, _)) = p.measured(v.text, format, size * 1.6) else {
+        return;
+    };
+    let max_w = w * 0.88;
+    let k = if width > max_w { max_w / width } else { 1.0 };
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    p.set_transform(&scale_about(k, cx, cy));
+    p.text(
+        v.text,
+        format,
+        Rect::centered(cx, cy, width + size, size * 1.6),
+        color(r, g, b, alpha),
+    );
+    p.set_transform(&scale_about(1.0, 0.0, 0.0));
 }
