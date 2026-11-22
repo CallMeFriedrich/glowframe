@@ -12,6 +12,9 @@ use crate::ui::stars::positions;
 pub(super) struct StarFormats {
     word: IDWriteTextFormat,
     current: IDWriteTextFormat,
+    /// Constellation V2 keywords (SPEC §5.4c2): about 1.5x, bold.
+    keyword: IDWriteTextFormat,
+    keyword_current: IDWriteTextFormat,
 }
 
 impl StarFormats {
@@ -34,9 +37,28 @@ impl StarFormats {
                 DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
                 false,
             )?,
+            keyword: text_format(
+                dwrite,
+                ui_font,
+                DWRITE_FONT_WEIGHT_BOLD,
+                small * KEYWORD_SCALE,
+                DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
+                false,
+            )?,
+            keyword_current: text_format(
+                dwrite,
+                ui_font,
+                DWRITE_FONT_WEIGHT_BOLD,
+                big * KEYWORD_SCALE,
+                DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
+                false,
+            )?,
         })
     }
 }
+
+/// Keyword size relative to a normal word (V2).
+const KEYWORD_SCALE: f32 = 1.5;
 
 /// Label sizes: older words, current word.
 fn sizes(h: f32) -> (f32, f32) {
@@ -222,5 +244,105 @@ fn draw_star(p: &Painter, x: f32, y: f32, r: f32, c: D2D1_COLOR_F) {
         }
         p.fill_color(c);
         p.ctx.FillGeometry(&geo, &p.res.brush, None);
+    }
+}
+
+/// Constellation V2 (SPEC §5.4c2): the continuous word chain. Same stars,
+/// lines and springs as V1; older lines get darker, keywords are larger,
+/// words pushed out of the 30 newest fade slowly.
+pub(super) fn draw_chain(p: &Painter, m: &UiModel, v: &ChainView, base: &Matrix3x2, alpha: f32) {
+    let alpha = alpha * v.alpha;
+    if alpha <= 0.0 || v.stars.is_empty() {
+        return;
+    }
+    p.set_transform(base);
+    let res = p.res;
+    let (w, h) = res.size;
+    let [r, g, b] = m.accent;
+    let at = |s: &ChainStar| (s.pos.0 * w, s.pos.1 * h);
+    let star_r = h * 0.0085;
+    let line_w = (h * 0.0018).max(1.0);
+    // Recency 1 (newest) .. 0 (30 words back).
+    let recency = |s: &ChainStar| {
+        1.0 - (v.newest.saturating_sub(s.k) as f32 / crate::ui::chain::MAX_WORDS as f32).min(1.0)
+    };
+    // Instrumental gap: gentle twinkle, different phase per star.
+    let twinkle = |s: &ChainStar| {
+        if v.gap {
+            0.78 + 0.22 * (m.time * 2.2 + s.k as f32 * 1.7).sin()
+        } else {
+            1.0
+        }
+    };
+    let vis = |s: &ChainStar| (1.0 - s.fade).clamp(0.0, 1.0);
+
+    // Lines first, so stars sit on top.
+    for pair in v.stars.windows(2) {
+        let (a, s) = (&pair[0], &pair[1]);
+        if !s.linked || a.k + 1 != s.k {
+            continue;
+        }
+        let t = spring_step(s.age, 0.5, 0.92).min(1.0);
+        if t <= 0.0 {
+            continue;
+        }
+        let la = alpha * vis(a).min(vis(s)) * (0.3 + 0.45 * recency(a));
+        if la <= 0.0 {
+            continue;
+        }
+        let (x0, y0) = at(a);
+        let (x1, y1) = at(s);
+        p.fill_color(color(r, g, b, la));
+        // SAFETY: drawing between BeginDraw/EndDraw.
+        unsafe {
+            p.ctx.DrawLine(
+                Vector2 { X: x0, Y: y0 },
+                Vector2 {
+                    X: x0 + (x1 - x0) * t,
+                    Y: y0 + (y1 - y0) * t,
+                },
+                &res.brush,
+                line_w,
+                None,
+            );
+        }
+    }
+
+    let (small, big) = sizes(h);
+    for s in &v.stars {
+        let pop = spring_step(s.age, 0.42, 0.6);
+        if pop <= 0.0 {
+            continue;
+        }
+        let t = (pop * 2.5).clamp(0.0, 1.0);
+        let (x, y) = at(s);
+        let grow = if s.current { 1.7 } else { 1.0 } * if s.keyword { 1.3 } else { 1.0 };
+        let rad = star_r * grow * pop.max(0.0);
+        let base_a = if s.current {
+            1.0
+        } else if s.keyword {
+            0.9
+        } else {
+            0.55 + 0.25 * recency(s)
+        };
+        let a = alpha * t * vis(s) * base_a * twinkle(s);
+        if a <= 0.0 {
+            continue;
+        }
+        if s.current {
+            p.circle(x, y, rad * 2.4, color(r, g, b, 0.18 * a));
+            p.circle(x, y, rad * 1.5, color(r, g, b, 0.22 * a));
+        }
+        draw_star(p, x, y, rad, color(r, g, b, a));
+        let (format, size) = match (s.current, s.keyword) {
+            (true, true) => (&res.stars.keyword_current, big * KEYWORD_SCALE),
+            (true, false) => (&res.stars.current, big),
+            (false, true) => (&res.stars.keyword, small * KEYWORD_SCALE),
+            (false, false) => (&res.stars.word, small),
+        };
+        let label = Rect::centered(x, y + rad * 1.6 + size * 0.75, w * 0.3, size * 1.5);
+        let mix = if s.current || s.keyword { 0.7 } else { 0.55 };
+        let tint = |c: f32| c + (1.0 - c) * mix;
+        p.text(s.text, format, label, color(tint(r), tint(g), tint(b), a));
     }
 }

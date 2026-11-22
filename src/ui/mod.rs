@@ -1,6 +1,7 @@
 //! Fullscreen UI logic: frame animation, layout, transitions.
 
 pub mod anim;
+pub mod chain;
 pub mod chat;
 pub mod clock;
 pub mod frame;

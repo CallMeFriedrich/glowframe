@@ -27,10 +27,10 @@ use crate::lyrics::{LyricsTracker, state_at};
 use crate::media::{Command, MediaService, MediaSnapshot, Playback, RepeatMode, Session};
 use crate::net::{NetJob, NetResult, NetWorker};
 use crate::render::capture::DesktopCapture;
-use crate::render::ui::StarsView;
 use crate::render::ui::{
     BubbleKind, ButtonView, ChatBubble, ChatView, CoverLyricsView, LyricsView, TrackView, UiModel,
 };
+use crate::render::ui::{ChainStar, ChainView, StarsView};
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
 use crate::settings::model::{BackgroundMode, Language, LyricsStyle};
@@ -42,6 +42,7 @@ use crate::settings_window::{MonitorInfo, PanelEvent, SettingsWindow};
 use crate::tray::{MenuAction, Tray};
 use crate::ui::anim::Spring;
 use crate::ui::anim::spring_step;
+use crate::ui::chain::StarChain;
 use crate::ui::chat::{ChatThread, reveal_words};
 use crate::ui::clock::{self, ClockFormat, LocalTime};
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
@@ -255,6 +256,11 @@ struct LyricsUi {
     chat_mix: Spring,
     /// Constellation view (SPEC §5.4c) blend.
     stars_mix: Spring,
+    /// Constellation V2 (SPEC §5.4c2): word chain, blend, and the moment
+    /// its lyrics went away (song change: the chain fades out).
+    chain: StarChain,
+    chain_mix: Spring,
+    chain_gone: Option<Instant>,
 }
 
 impl LyricsUi {
@@ -272,6 +278,9 @@ impl LyricsUi {
             chat_scroll: Spring::new(0.0, 0.5, 0.86),
             chat_mix: Spring::smooth(0.0, 0.55),
             stars_mix: Spring::smooth(0.0, 0.55),
+            chain: StarChain::new(),
+            chain_mix: Spring::smooth(0.0, 0.55),
+            chain_gone: None,
         }
     }
 }
@@ -298,6 +307,7 @@ struct UiFrame {
     chat_scroll: f32,
     chat_mix: f32,
     stars_mix: f32,
+    chain_mix: f32,
 }
 
 pub struct App {
@@ -1547,8 +1557,28 @@ impl App {
             .lyrics_ui
             .stars_mix
             .update(now, f32::from(u8::from(stars_target)));
-        let focus_target =
-            variant == IdleVariant::Focus && self.ui.focus_lyrics && !chat_target && !stars_target;
+        let chain_target = ls.style == LyricsStyle::ConstellationV2 && self.ui.focus_lyrics;
+        let chain_mix = self
+            .lyrics_ui
+            .chain_mix
+            .update(now, f32::from(u8::from(chain_target)));
+        if chain_target || chain_mix > 0.0 {
+            match (&found, lyrics_pos) {
+                (Some(l), Some(pos)) => {
+                    let aspect = self.chain_aspect();
+                    self.lyrics_ui.chain.update(l.id, &l.lines, pos, aspect);
+                    self.lyrics_ui.chain_gone = None;
+                }
+                _ => {
+                    self.lyrics_ui.chain_gone.get_or_insert(now);
+                }
+            }
+        }
+        let focus_target = variant == IdleVariant::Focus
+            && self.ui.focus_lyrics
+            && !chat_target
+            && !stars_target
+            && !chain_target;
         let focus = self.ui.focus.update(now, f32::from(u8::from(focus_target)));
         let clock = self
             .ui
@@ -1586,6 +1616,7 @@ impl App {
             chat_scroll,
             chat_mix,
             stars_mix,
+            chain_mix,
         }
     }
 
@@ -1727,6 +1758,58 @@ impl App {
             previous_seed: seed(self.lyrics_ui.prev_line),
             change: frame.line_change,
             gap: st.gap,
+        })
+    }
+
+    /// Aspect ratio for placing chain stars: the first animation monitor.
+    fn chain_aspect(&self) -> f32 {
+        self.windows
+            .iter()
+            .find_map(|w| w.surface.as_ref())
+            .map_or(16.0 / 9.0, |s| {
+                let (w, h) = s.size_dip();
+                w / h.max(1.0)
+            })
+    }
+
+    /// Constellation V2 view model (SPEC §5.4c2).
+    fn chain_view(&self, frame: &UiFrame, now: Instant) -> Option<ChainView<'_>> {
+        if frame.chain_mix <= 0.0 {
+            return None;
+        }
+        let c = &self.lyrics_ui.chain;
+        if c.is_empty() {
+            return None;
+        }
+        // Song change: the old chain fades out.
+        let alpha = self.lyrics_ui.chain_gone.map_or(1.0, |t| {
+            1.0 - now.saturating_duration_since(t).as_secs_f32() / 0.8
+        });
+        if alpha <= 0.0 {
+            return None;
+        }
+        let newest = c.newest();
+        let stars = c
+            .placed()
+            .filter_map(|p| {
+                let w = c.word(p.k)?;
+                Some(ChainStar {
+                    text: &w.text,
+                    pos: p.pos,
+                    age: c.age(p.k),
+                    fade: c.fade(p.k),
+                    keyword: w.keyword,
+                    current: newest == Some(p.k),
+                    linked: p.linked,
+                    k: p.k,
+                })
+            })
+            .collect();
+        Some(ChainView {
+            stars,
+            newest: newest.unwrap_or(0),
+            gap: frame.line_state.is_some_and(|s| s.gap),
+            alpha: alpha.clamp(0.0, 1.0),
         })
     }
 
@@ -1877,6 +1960,8 @@ impl App {
             chat_mix: frame.chat_mix,
             stars: self.stars_view(&frame),
             stars_mix: frame.stars_mix,
+            chain: self.chain_view(&frame, now),
+            chain_mix: frame.chain_mix,
             background: self.background_image.as_ref(),
             live_background: self
                 .desktop_capture

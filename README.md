@@ -23,9 +23,12 @@ beat, with a player view, a large cover view and line-synced lyrics.
   few minutes
 - **Lyrics styles (keys 1–9):** **1** classic, **2** messages – a chat thread
   where message bubbles pop in line by line, words light up as they are sung
-  and lines that mention a place appear as a small map card – and **3**
+  and lines that mention a place appear as a small map card – **3**
   constellation, where the words of each line appear as stars connected one
-  after another.
+  after another, and **4** constellation V2, one continuous chain of up to 30
+  words across lines with keywords drawn larger.
+- **Record:** for songs without lyrics, every other song (at random) shows a
+  spinning vinyl record with the cover as its label instead of the cover.
 - **Backgrounds:** black, your Windows wallpaper, your own image (at least
   2560×1440) or real transparency, with adjustable dimming; optionally keep the
   taskbar visible.

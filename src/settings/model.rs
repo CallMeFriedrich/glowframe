@@ -116,14 +116,18 @@ pub enum LyricsStyle {
     Classic,
     Messages,
     Constellation,
+    /// Constellation V2 (SPEC §5.4c2): one continuous chain of words.
+    #[serde(rename = "constellation2")]
+    ConstellationV2,
 }
 
 impl LyricsStyle {
     /// In key order: digit 1 selects `ALL[0]` and so on (SPEC §4).
-    pub const ALL: [LyricsStyle; 3] = [
+    pub const ALL: [LyricsStyle; 4] = [
         LyricsStyle::Classic,
         LyricsStyle::Messages,
         LyricsStyle::Constellation,
+        LyricsStyle::ConstellationV2,
     ];
 
     pub fn from_digit(d: u32) -> Option<Self> {
@@ -306,7 +310,11 @@ mod tests {
         assert_eq!(s.background.dim, 50);
         assert_eq!(LyricsStyle::from_digit(1), Some(LyricsStyle::Classic));
         assert_eq!(LyricsStyle::from_digit(3), Some(LyricsStyle::Constellation));
-        assert_eq!(LyricsStyle::from_digit(4), None);
+        assert_eq!(
+            LyricsStyle::from_digit(4),
+            Some(LyricsStyle::ConstellationV2)
+        );
+        assert_eq!(LyricsStyle::from_digit(5), None);
         assert_eq!(LyricsStyle::from_digit(0), None);
         let mut s = s;
         s.background.dim = 200;

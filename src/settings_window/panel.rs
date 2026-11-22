@@ -270,7 +270,7 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                     ui.indent("lyrics_sub", |ui| {
                         ui.checkbox(&mut l.in_player, i18n.t("settings.lyrics_player"));
                         ui.checkbox(&mut l.in_cover, i18n.t("settings.lyrics_cover"));
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.label(i18n.t("settings.lyrics_style"));
                             ui.radio_value(
                                 &mut l.style,
@@ -286,6 +286,11 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                                 &mut l.style,
                                 LyricsStyle::Constellation,
                                 i18n.t("settings.style_constellation"),
+                            );
+                            ui.radio_value(
+                                &mut l.style,
+                                LyricsStyle::ConstellationV2,
+                                i18n.t("settings.style_constellation2"),
                             );
                         });
                     });

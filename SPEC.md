@@ -72,7 +72,7 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - **Alternativen:** der Hotkey oder Tray → Stoppen.
 
 ### Zifferntasten 1–9 (v1.5, ersetzt Taste F aus v1.3)
-- Wählen im laufenden Modus den Lyrics-Stil direkt: **1** Klassisch, **2** Nachrichten (§5.4b), **3** Sternbild (§5.4c). Weitere Stile bekommen die nächsten Ziffern bis 9; unbelegte Ziffern tun nichts.
+- Wählen im laufenden Modus den Lyrics-Stil direkt: **1** Klassisch, **2** Nachrichten (§5.4b), **3** Sternbild (§5.4c), **4** Sternbild V2 (§5.4c2). Weitere Stile bekommen die nächsten Ziffern bis 9; unbelegte Ziffern tun nichts.
 - Die Wahl wird gespeichert und ist auch in den Einstellungen änderbar (§7).
 
 ### Einzelinstanz
@@ -172,6 +172,13 @@ Lyrics als Sternbild: Ruhe-Ansicht im Lyrics-Stil „Sternbild“, nur mit synch
 - Die Wörter erscheinen nacheinander (Zeit bis zur nächsten Zeile nach Wortlänge verteilt, wie §5.4b); jeder neue Stern poppt per Feder mit leichtem Überschwingen auf, die Linie vom vorherigen Stern wächst per Feder zu ihm hin.
 - Das aktuelle Wort ist größer und heller mit leichtem Schein; ältere Sterne und Linien sind gedimmt. Farbe: erste Palettenfarbe (Akzent).
 - Zeilenwechsel: das alte Sternbild blendet aus und driftet leicht, das neue baut sich auf. Instrumentale Lücken: pulsierende Punkte.
+
+### 5.4c2 Sternbild V2 (v1.6)
+Eigener Lyrics-Stil „Sternbild V2“ (Taste 4); V1 (§5.4c) bleibt unverändert. Gleiche Sterne, Linien, Federn und Farben wie V1, mit diesen Unterschieden:
+- **Durchgehende Kette:** Die Wörter werden über Zeilenwechsel hinweg aneinandergereiht; das erste Wort einer Zeile verbindet sich mit dem letzten der vorigen. Bis zu **30 Wörter** sind gleichzeitig sichtbar; jedes weitere lässt das älteste ganz langsam (über ~6 s) ausblenden. Ältere Linien werden nach hinten hin dunkler.
+- **Platzierung:** Jeder neue Stern landet an einem zufälligen freien Punkt des ganzen Bildschirms (Mindestabstand zu allen sichtbaren Sternen, begrenzte Linienlänge). **Kreuzungen der Linien sind erlaubt.**
+- **Schlagworte** werden etwa 1,5× größer und fett dargestellt, ihr Stern etwas größer. Erkennung pro Song: Jedes Wort bekommt Punkte nach Häufigkeit im ganzen Song und Wortlänge; Füllwörter (DE/EN-Liste) und Wörter unter 3 Buchstaben zählen nie. Die besten ~15 % der verschiedenen Wörter sind Schlagworte.
+- **Instrumentale Lücken:** Das Sternbild bleibt stehen, die Sterne funkeln leicht; danach geht die Kette weiter. Beim Songwechsel blendet die Kette aus. Beim Zurückspulen verschwinden die noch nicht gesungenen Wörter; nach einem großen Sprung nach vorn wird die Kette neu aufgebaut.
 
 ### 5.4d Schallplatte (v1.6)
 Abwechslung für Songs **ohne Lyrics** (keine gefunden, Werbung oder Lyrics ausgeschaltet).
@@ -298,7 +305,7 @@ Abwechslung für Songs **ohne Lyrics** (keine gefunden, Werbung oder Lyrics ausg
 | Lyrics | Lyrics anzeigen | an/aus (Hauptschalter) | an |
 | Lyrics | In Player-Ansicht | an/aus | an |
 | Lyrics | In Cover-Ansicht | an/aus | an |
-| Lyrics | Stil (v1.3/v1.5, auch per Zifferntaste 1–9) | Klassisch / Nachrichten / Sternbild | Klassisch |
+| Lyrics | Stil (v1.3/v1.5, auch per Zifferntaste 1–9) | Klassisch / Nachrichten / Sternbild / Sternbild V2 | Klassisch |
 | Lyrics (erweitert) | Versatz | −2000 … +2000 ms | 0 |
 | Cover | HD-Cover laden | an/aus | an |
 

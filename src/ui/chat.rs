@@ -50,22 +50,13 @@ pub fn sides(lyrics_id: u64, lines: &[LyricLine]) -> Vec<Side> {
 /// LRCLIB has line timings only, so the time until the next line is spread
 /// over the words by their length (SPEC §5.4b).
 pub fn reveal_words(text: &str, elapsed: Duration, line_duration: Option<Duration>) -> f32 {
-    let words: Vec<usize> = text.split_whitespace().map(|w| w.chars().count()).collect();
-    if words.is_empty() {
+    let Some((weights, window)) = word_timing(text, line_duration) else {
         return 0.0;
-    }
-    // Weight per word: its letters plus a little for the gap after it.
-    let weights: Vec<f32> = words.iter().map(|&c| c as f32 + 2.0).collect();
+    };
     let total: f32 = weights.iter().sum();
-    // Sung text rarely fills the whole gap to the next line; cap the speed
-    // at ~0.11 s per weight unit and leave a short rest at the end.
-    let natural = total * 0.11;
-    let window = line_duration
-        .map_or(natural, |d| (d.as_secs_f32() * 0.85).min(natural))
-        .max(0.25);
     let mut t = elapsed.as_secs_f32() / window * total;
     let mut revealed = 0.0;
-    for w in weights {
+    for &w in &weights {
         if t >= w {
             revealed += 1.0;
             t -= w;
@@ -74,7 +65,45 @@ pub fn reveal_words(text: &str, elapsed: Duration, line_duration: Option<Duratio
             break;
         }
     }
-    revealed.min(words.len() as f32)
+    revealed.min(weights.len() as f32)
+}
+
+/// Seconds after the line start at which each word starts to appear
+/// (same timing as [`reveal_words`]).
+pub fn word_starts(text: &str, line_duration: Option<Duration>) -> Vec<f32> {
+    let Some((weights, window)) = word_timing(text, line_duration) else {
+        return Vec::new();
+    };
+    let total: f32 = weights.iter().sum();
+    let mut acc = 0.0;
+    weights
+        .iter()
+        .map(|w| {
+            let start = acc / total * window;
+            acc += w;
+            start
+        })
+        .collect()
+}
+
+/// Word weights and the reveal window in seconds; `None` without words.
+fn word_timing(text: &str, line_duration: Option<Duration>) -> Option<(Vec<f32>, f32)> {
+    // Weight per word: its letters plus a little for the gap after it.
+    let weights: Vec<f32> = text
+        .split_whitespace()
+        .map(|w| w.chars().count() as f32 + 2.0)
+        .collect();
+    if weights.is_empty() {
+        return None;
+    }
+    let total: f32 = weights.iter().sum();
+    // Sung text rarely fills the whole gap to the next line; cap the speed
+    // at ~0.11 s per weight unit and leave a short rest at the end.
+    let natural = total * 0.11;
+    let window = line_duration
+        .map_or(natural, |d| (d.as_secs_f32() * 0.85).min(natural))
+        .max(0.25);
+    Some((weights, window))
 }
 
 /// UTF-16 ranges (start, len) of the words of `text`, for DirectWrite.

@@ -24,6 +24,34 @@ mod chat;
 mod stars;
 mod vinyl;
 
+/// One star of the constellation V2 chain (SPEC §5.4c2).
+pub struct ChainStar<'a> {
+    pub text: &'a str,
+    /// Position in unit coordinates (0..1 of the monitor).
+    pub pos: (f32, f32),
+    /// Song seconds since the word appeared (pop and line springs).
+    pub age: f32,
+    /// Fade-out 0..1 once pushed out of the 30 newest words.
+    pub fade: f32,
+    pub keyword: bool,
+    pub current: bool,
+    /// Connected to the previous word.
+    pub linked: bool,
+    /// Global word index (twinkle phase, recency).
+    pub k: usize,
+}
+
+/// Constellation V2 view (SPEC §5.4c2).
+pub struct ChainView<'a> {
+    /// Placed stars, oldest first.
+    pub stars: Vec<ChainStar<'a>>,
+    pub newest: usize,
+    /// Instrumental gap: the stars twinkle.
+    pub gap: bool,
+    /// Fade-out on song change.
+    pub alpha: f32,
+}
+
 /// Constellation view (SPEC §5.4c).
 pub struct StarsView<'a> {
     pub current: &'a str,
@@ -183,6 +211,9 @@ pub struct UiModel<'a> {
     /// Constellation view (SPEC §5.4c) and its blend.
     pub stars: Option<StarsView<'a>>,
     pub stars_mix: f32,
+    /// Constellation V2 (SPEC §5.4c2) and its blend.
+    pub chain: Option<ChainView<'a>>,
+    pub chain_mix: f32,
     /// Background image (wallpaper or custom) and black dimming 0..1.
     pub background: Option<&'a Arc<Image>>,
     /// Live wallpaper frame and the part of it behind this monitor (in
@@ -1244,7 +1275,12 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     } else {
         0.0
     };
-    let idle_a = view * content * (1.0 - chat_mix - stars_mix).max(0.0);
+    let chain_mix = if m.chain.is_some() {
+        m.chain_mix.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let idle_a = view * content * (1.0 - chat_mix - stars_mix - chain_mix).max(0.0);
     if idle_a > 0.0 {
         let base = cover_transform(m, w, h);
         p.set_transform(&base);
@@ -1311,6 +1347,13 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
         && let Some(s) = &m.stars
     {
         stars::draw(&p, m, s, &cover_transform(m, w, h), stars_a);
+    }
+    // ----- constellation V2 (SPEC §5.4c2) -----
+    let chain_a = view * content * chain_mix;
+    if chain_a > 0.0
+        && let Some(c) = &m.chain
+    {
+        stars::draw_chain(&p, m, c, &cover_transform(m, w, h), chain_a);
     }
     p.set_transform(&scale_about(1.0, 0.0, 0.0));
 

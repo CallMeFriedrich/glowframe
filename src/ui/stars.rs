@@ -4,13 +4,13 @@
 
 /// Safe area in unit coordinates: below the clock, away from the edges
 /// (the glowing frame) and with room for the label under each star.
-const AREA: (f32, f32, f32, f32) = (0.07, 0.2, 0.93, 0.86);
+pub(crate) const AREA: (f32, f32, f32, f32) = (0.07, 0.2, 0.93, 0.86);
 const CANDIDATES: usize = 60;
 
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
-    fn next(&mut self) -> f32 {
+    pub(crate) fn next(&mut self) -> f32 {
         let mut x = self.0;
         x ^= x << 13;
         x ^= x >> 7;
@@ -21,7 +21,7 @@ impl Rng {
 }
 
 /// Distance in screen proportions (x stretched by the aspect ratio).
-fn dist(a: (f32, f32), b: (f32, f32), aspect: f32) -> f32 {
+pub(crate) fn dist(a: (f32, f32), b: (f32, f32), aspect: f32) -> f32 {
     ((a.0 - b.0) * aspect).hypot(a.1 - b.1)
 }
 
