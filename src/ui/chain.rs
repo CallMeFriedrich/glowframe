@@ -81,6 +81,11 @@ fn is_candidate(w: &str) -> bool {
 /// words and words under 3 letters never count. The best ~15 % of the
 /// distinct candidate words are keywords (SPEC §5.4c2).
 pub fn keywords(lines: &[LyricLine]) -> HashSet<String> {
+    keywords_ranked(lines).into_iter().collect()
+}
+
+/// Keywords, best first (see [`keywords`]).
+pub fn keywords_ranked(lines: &[LyricLine]) -> Vec<String> {
     let mut counts: HashMap<String, u32> = HashMap::new();
     for l in lines {
         for w in l.text.split_whitespace() {

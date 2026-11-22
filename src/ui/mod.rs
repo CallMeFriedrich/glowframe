@@ -4,6 +4,7 @@ pub mod anim;
 pub mod chain;
 pub mod chat;
 pub mod clock;
+pub mod code;
 pub mod frame;
 pub mod idle;
 pub mod layout;

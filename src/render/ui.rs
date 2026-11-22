@@ -21,8 +21,17 @@ use windows::Win32::Graphics::Direct2D::{
 };
 
 mod chat;
+mod code;
 mod stars;
 mod vinyl;
+
+/// Code view (SPEC §5.4e).
+pub struct CodeView<'a> {
+    pub doc: &'a crate::ui::code::CodeDoc,
+    /// Song second (lyrics position).
+    pub t: f32,
+    pub cam: crate::ui::code::CameraView,
+}
 
 /// One star of the constellation V2 chain (SPEC §5.4c2).
 pub struct ChainStar<'a> {
@@ -214,6 +223,11 @@ pub struct UiModel<'a> {
     /// Constellation V2 (SPEC §5.4c2) and its blend.
     pub chain: Option<ChainView<'a>>,
     pub chain_mix: f32,
+    /// Code view (SPEC §5.4e) and its blend.
+    pub code: Option<CodeView<'a>>,
+    pub code_mix: f32,
+    /// The three palette stops in sRGB 0..1 (code view syntax colors).
+    pub palette: [[f32; 3]; 3],
     /// Background image (wallpaper or custom) and black dimming 0..1.
     pub background: Option<&'a Arc<Image>>,
     /// Live wallpaper frame and the part of it behind this monitor (in
@@ -270,6 +284,7 @@ pub struct UiResources {
     chat: chat::ChatFormats,
     stars: stars::StarFormats,
     corner: vinyl::CornerFormats,
+    code: code::CodeRes,
     factory: ID2D1Factory,
     brush: ID2D1SolidColorBrush,
     /// Extra brushes for word-by-word reveal (drawing effects).
@@ -424,6 +439,7 @@ impl UiResources {
                 chat: chat::ChatFormats::new(dwrite, &ui_font, &icon_font, w, h)?,
                 stars: stars::StarFormats::new(dwrite, &ui_font, h)?,
                 corner: vinyl::CornerFormats::new(dwrite, &ui_font, h)?,
+                code: code::CodeRes::new(dwrite, ctx, &ui_font, h)?,
                 factory: ctx.GetFactory()?,
                 brush: ctx.CreateSolidColorBrush(&white, None)?,
                 brush_hi: ctx.CreateSolidColorBrush(&white, None)?,
@@ -1280,7 +1296,12 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
     } else {
         0.0
     };
-    let idle_a = view * content * (1.0 - chat_mix - stars_mix - chain_mix).max(0.0);
+    let code_mix = if m.code.is_some() {
+        m.code_mix.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let idle_a = view * content * (1.0 - chat_mix - stars_mix - chain_mix - code_mix).max(0.0);
     if idle_a > 0.0 {
         let base = cover_transform(m, w, h);
         p.set_transform(&base);
@@ -1354,6 +1375,13 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
         && let Some(c) = &m.chain
     {
         stars::draw_chain(&p, m, c, &cover_transform(m, w, h), chain_a);
+    }
+    // ----- code view (SPEC §5.4e) -----
+    let code_a = view * content * code_mix;
+    if code_a > 0.0
+        && let Some(c) = &m.code
+    {
+        code::draw(&p, m, c, &cover_transform(m, w, h), code_a);
     }
     p.set_transform(&scale_about(1.0, 0.0, 0.0));
 

@@ -25,8 +25,11 @@ beat, with a player view, a large cover view and line-synced lyrics.
   where message bubbles pop in line by line, words light up as they are sung
   and lines that mention a place appear as a small map card – **3**
   constellation, where the words of each line appear as stars connected one
-  after another, and **4** constellation V2, one continuous chain of up to 30
-  words across lines with keywords drawn larger.
+  after another, **4** constellation V2, one continuous chain of up to 30
+  words across lines with keywords drawn larger, and **5** code, where the
+  lyrics are typed like code in an editor while the camera follows the cursor,
+  flies back to the chorus when it repeats and sometimes looks at the code
+  from the side.
 - **Record:** for songs without lyrics, every other song (at random) shows a
   spinning vinyl record with the cover as its label instead of the cover.
 - **Backgrounds:** black, your Windows wallpaper, your own image (at least

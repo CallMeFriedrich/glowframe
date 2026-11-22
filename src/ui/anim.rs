@@ -63,6 +63,14 @@ impl Spring {
         self.value
     }
 
+    /// Changes response and damping, keeping value and velocity (the
+    /// camera switches between follow, swipe and fly).
+    pub fn retune(&mut self, response: f32, damping_ratio: f32) {
+        let omega = std::f32::consts::TAU / response.max(0.01);
+        self.stiffness = omega * omega;
+        self.damping = 2.0 * damping_ratio * omega;
+    }
+
     /// Jumps to `value` without motion.
     pub fn set(&mut self, value: f32) {
         self.value = value;

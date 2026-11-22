@@ -71,6 +71,15 @@ pub fn reveal_words(text: &str, elapsed: Duration, line_duration: Option<Duratio
 /// Seconds after the line start at which each word starts to appear
 /// (same timing as [`reveal_words`]).
 pub fn word_starts(text: &str, line_duration: Option<Duration>) -> Vec<f32> {
+    word_spans(text, line_duration)
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect()
+}
+
+/// (start, end) in seconds after the line start for each word, same
+/// timing as [`reveal_words`].
+pub fn word_spans(text: &str, line_duration: Option<Duration>) -> Vec<(f32, f32)> {
     let Some((weights, window)) = word_timing(text, line_duration) else {
         return Vec::new();
     };
@@ -81,7 +90,7 @@ pub fn word_starts(text: &str, line_duration: Option<Duration>) -> Vec<f32> {
         .map(|w| {
             let start = acc / total * window;
             acc += w;
-            start
+            (start, acc / total * window)
         })
         .collect()
 }

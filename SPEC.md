@@ -72,7 +72,7 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 - **Alternativen:** der Hotkey oder Tray → Stoppen.
 
 ### Zifferntasten 1–9 (v1.5, ersetzt Taste F aus v1.3)
-- Wählen im laufenden Modus den Lyrics-Stil direkt: **1** Klassisch, **2** Nachrichten (§5.4b), **3** Sternbild (§5.4c), **4** Sternbild V2 (§5.4c2). Weitere Stile bekommen die nächsten Ziffern bis 9; unbelegte Ziffern tun nichts.
+- Wählen im laufenden Modus den Lyrics-Stil direkt: **1** Klassisch, **2** Nachrichten (§5.4b), **3** Sternbild (§5.4c), **4** Sternbild V2 (§5.4c2), **5** Code (§5.4e). Weitere Stile bekommen die nächsten Ziffern bis 9; unbelegte Ziffern tun nichts.
 - Die Wahl wird gespeichert und ist auch in den Einstellungen änderbar (§7).
 
 ### Einzelinstanz
@@ -179,6 +179,16 @@ Eigener Lyrics-Stil „Sternbild V2“ (Taste 4); V1 (§5.4c) bleibt unveränder
 - **Platzierung:** Jeder neue Stern landet an einem zufälligen freien Punkt des ganzen Bildschirms (Mindestabstand zu allen sichtbaren Sternen, begrenzte Linienlänge). **Kreuzungen der Linien sind erlaubt.**
 - **Schlagworte** werden etwa 1,5× größer und fett dargestellt, ihr Stern etwas größer. Erkennung pro Song: Jedes Wort bekommt Punkte nach Häufigkeit im ganzen Song und Wortlänge; Füllwörter (DE/EN-Liste) und Wörter unter 3 Buchstaben zählen nie. Die besten ~15 % der verschiedenen Wörter sind Schlagworte.
 - **Instrumentale Lücken:** Das Sternbild bleibt stehen, die Sterne funkeln leicht; danach geht die Kette weiter. Beim Songwechsel blendet die Kette aus. Beim Zurückspulen verschwinden die noch nicht gesungenen Wörter; nach einem großen Sprung nach vorn wird die Kette neu aufgebaut.
+
+### 5.4e Code-Ansicht (v1.6)
+Lyrics-Stil „Code“ (Taste 5): Die Lyrics werden wie Code in einem Editor getippt, synchron zum Song. Ruhe-Ansicht, nur mit synchronisierten Lyrics.
+- **Editor:** dunkles Editorfenster, etwas eingerückt, damit der Leuchtrahmen sichtbar bleibt. Oben ein Tab mit dem Songtitel als Dateiname (`neon_horizon.rs`), links Zeilennummern, die aktuelle Zeile ist hinterlegt, blinkender Balken-Cursor (beim Tippen durchgehend sichtbar). Monospace-Schrift (Cascadia Mono, sonst Consolas). Syntaxfarben werden aus der Cover-Palette abgeleitet (aufgehellt, damit lesbar).
+- **Code-Form:** oben ein Kommentar mit Titel und Interpret und `import { … } from "lyrics";` mit den Schlagworten des Songs (§5.4c2). Jeder Abschnitt ist eine Funktion (`fn verse_1() {`, `fn chorus() {`), jede Zeile `sing("…");`, instrumentale Pausen ein Kommentar `// ♪ instrumental`.
+- **Tippen:** Wort für Wort, zeichenweise, ohne Tippfehler. Die Wortzeiten werden wie in §5.4b über die Zeile verteilt. Gerüst (Funktionskopf, `sing("`, `");`, `}`) wird kurz vor bzw. nach den Wörtern schnell getippt.
+- **Abschnitte:** LRCLIB hat keine Marker. Ein Block von mindestens 2 Zeilen, der im Song mehrmals vorkommt, ist ein Refrain. Neue Abschnitte beginnen außerdem nach instrumentalen Pausen (über 4 s oder Leerzeile) und beim Wechsel zwischen Wiederholungs- und Strophenzeilen; zu lange Blöcke werden alle 4 Zeilen geteilt. Alles andere sind Strophen (`verse_1`, `verse_2` …).
+- **Refrain-Wiederholung:** wird nicht neu getippt. Am Dateiende erscheint ein Aufruf `chorus();`, die Kamera springt zur vorhandenen Funktion und hebt die Zeilen beim Singen Wort für Wort hervor.
+- **Kamera:** eng am Cursor (etwa 8 Zeilen sichtbar), folgt per Feder und neigt sich leicht in Tipprichtung. **3D:** pro Abschnitt gewürfelt schaut etwa jeder zweite Abschnitt von der Seite (40°, links oder rechts, manchmal zusätzlich leicht von unten/oben) perspektivisch auf die Code-Ebene; der Winkel wechselt per Feder mit dem Abschnitt. In der Schrägansicht wird nichts hart abgeschnitten: Die Code-Ebene blendet zu den Rändern des Editors weich aus, die ferne Seite wird zusätzlich abgedunkelt. Beim Abschnittswechsel: liegt das Ziel nah, ein schneller Schwenk; liegt es weit weg, zoomt sie heraus (ganze Datei sichtbar), fliegt hin und zoomt wieder ein (~1,5 s).
+- Alles hängt an der Songposition: Pause hält das Tippen an, Spulen springt an die passende Stelle.
 
 ### 5.4d Schallplatte (v1.6)
 Abwechslung für Songs **ohne Lyrics** (keine gefunden, Werbung oder Lyrics ausgeschaltet).
@@ -305,7 +315,7 @@ Abwechslung für Songs **ohne Lyrics** (keine gefunden, Werbung oder Lyrics ausg
 | Lyrics | Lyrics anzeigen | an/aus (Hauptschalter) | an |
 | Lyrics | In Player-Ansicht | an/aus | an |
 | Lyrics | In Cover-Ansicht | an/aus | an |
-| Lyrics | Stil (v1.3/v1.5, auch per Zifferntaste 1–9) | Klassisch / Nachrichten / Sternbild / Sternbild V2 | Klassisch |
+| Lyrics | Stil (v1.3/v1.5, auch per Zifferntaste 1–9) | Klassisch / Nachrichten / Sternbild / Sternbild V2 / Code | Klassisch |
 | Lyrics (erweitert) | Versatz | −2000 … +2000 ms | 0 |
 | Cover | HD-Cover laden | an/aus | an |
 

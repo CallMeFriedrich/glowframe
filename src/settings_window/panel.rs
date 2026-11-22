@@ -292,6 +292,11 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                                 LyricsStyle::ConstellationV2,
                                 i18n.t("settings.style_constellation2"),
                             );
+                            ui.radio_value(
+                                &mut l.style,
+                                LyricsStyle::Code,
+                                i18n.t("settings.style_code"),
+                            );
                         });
                     });
                     egui::CollapsingHeader::new(i18n.t("settings.advanced"))

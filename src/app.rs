@@ -30,7 +30,7 @@ use crate::render::capture::DesktopCapture;
 use crate::render::ui::{
     BubbleKind, ButtonView, ChatBubble, ChatView, CoverLyricsView, LyricsView, TrackView, UiModel,
 };
-use crate::render::ui::{ChainStar, ChainView, StarsView};
+use crate::render::ui::{ChainStar, ChainView, CodeView, StarsView};
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
 use crate::settings::model::{BackgroundMode, Language, LyricsStyle};
@@ -45,6 +45,7 @@ use crate::ui::anim::spring_step;
 use crate::ui::chain::StarChain;
 use crate::ui::chat::{ChatThread, reveal_words};
 use crate::ui::clock::{self, ClockFormat, LocalTime};
+use crate::ui::code::{Camera, CameraView, CodeDoc};
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
 use crate::ui::idle::{IdleScheduler, IdleVariant, WakeGate, wake_distance};
 use crate::ui::layout::{self, Button};
@@ -261,6 +262,12 @@ struct LyricsUi {
     chain: StarChain,
     chain_mix: Spring,
     chain_gone: Option<Instant>,
+    /// Code view (SPEC §5.4e): document of the song, camera, blend and the
+    /// last song second (kept while the view fades out on song change).
+    code: Option<CodeDoc>,
+    code_cam: Camera,
+    code_mix: Spring,
+    code_t: f32,
 }
 
 impl LyricsUi {
@@ -281,6 +288,10 @@ impl LyricsUi {
             chain: StarChain::new(),
             chain_mix: Spring::smooth(0.0, 0.55),
             chain_gone: None,
+            code: None,
+            code_cam: Camera::default(),
+            code_mix: Spring::smooth(0.0, 0.55),
+            code_t: 0.0,
         }
     }
 }
@@ -308,6 +319,8 @@ struct UiFrame {
     chat_mix: f32,
     stars_mix: f32,
     chain_mix: f32,
+    code_mix: f32,
+    code_cam: Option<CameraView>,
 }
 
 pub struct App {
@@ -1574,11 +1587,36 @@ impl App {
                 }
             }
         }
+        let code_target = ls.style == LyricsStyle::Code && self.ui.focus_lyrics;
+        let code_mix = self
+            .lyrics_ui
+            .code_mix
+            .update(now, f32::from(u8::from(code_target)));
+        let mut code_cam = None;
+        if code_target || code_mix > 0.0 {
+            if let (Some(l), Some(pos)) = (&found, lyrics_pos) {
+                if self.lyrics_ui.code.as_ref().is_none_or(|d| d.id != l.id) {
+                    let (title, artist) = self
+                        .current
+                        .as_ref()
+                        .map_or(("", ""), |t| (t.title.as_str(), t.artist.as_str()));
+                    self.lyrics_ui.code = Some(CodeDoc::build(l.id, &l.lines, title, artist));
+                }
+                self.lyrics_ui.code_t = pos.as_secs_f32();
+            }
+            if let Some(doc) = &self.lyrics_ui.code {
+                let focus = doc.focus(self.lyrics_ui.code_t);
+                // The editor panel is a little wider than the screen ratio.
+                let aspect = self.chain_aspect() * 1.12;
+                code_cam = Some(self.lyrics_ui.code_cam.update(now, doc.id, focus, aspect));
+            }
+        }
         let focus_target = variant == IdleVariant::Focus
             && self.ui.focus_lyrics
             && !chat_target
             && !stars_target
-            && !chain_target;
+            && !chain_target
+            && !code_target;
         let focus = self.ui.focus.update(now, f32::from(u8::from(focus_target)));
         let clock = self
             .ui
@@ -1617,6 +1655,8 @@ impl App {
             chat_mix,
             stars_mix,
             chain_mix,
+            code_mix,
+            code_cam,
         }
     }
 
@@ -1868,6 +1908,18 @@ impl App {
         }
     }
 
+    /// The three palette stops in sRGB (code view syntax colors).
+    fn palette_srgb(&self, now: Instant) -> [[f32; 3]; 3] {
+        self.animator.current_stops(now).map(|c| {
+            let c = c.to_linear();
+            [
+                linear_to_srgb(c.r),
+                linear_to_srgb(c.g),
+                linear_to_srgb(c.b),
+            ]
+        })
+    }
+
     fn accent(&self, now: Instant) -> [f32; 3] {
         let c = self.animator.current_stops(now)[1].to_linear();
         [
@@ -1962,6 +2014,19 @@ impl App {
             stars_mix: frame.stars_mix,
             chain: self.chain_view(&frame, now),
             chain_mix: frame.chain_mix,
+            code: self
+                .lyrics_ui
+                .code
+                .as_ref()
+                .zip(frame.code_cam)
+                .filter(|_| frame.code_mix > 0.0)
+                .map(|(doc, cam)| CodeView {
+                    doc,
+                    t: self.lyrics_ui.code_t,
+                    cam,
+                }),
+            code_mix: frame.code_mix,
+            palette: self.palette_srgb(now),
             background: self.background_image.as_ref(),
             live_background: self
                 .desktop_capture
