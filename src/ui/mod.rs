@@ -7,3 +7,4 @@ pub mod frame;
 pub mod idle;
 pub mod layout;
 pub mod stars;
+pub mod vinyl;

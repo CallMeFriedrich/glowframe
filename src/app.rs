@@ -47,6 +47,7 @@ use crate::ui::clock::{self, ClockFormat, LocalTime};
 use crate::ui::frame::{FrameAnimator, FrameInputs, FrameState, preset_colors};
 use crate::ui::idle::{IdleScheduler, IdleVariant, WakeGate, wake_distance};
 use crate::ui::layout::{self, Button};
+use crate::ui::vinyl::{self, Turntable};
 use crate::update::Release;
 
 /// Second Esc must follow within this window (SPEC §4).
@@ -160,6 +161,10 @@ struct TrackDisplay {
     artist: String,
     thumb_key: Option<u64>,
     album_key: Option<u64>,
+    /// Coin flip of this song: record instead of cover (SPEC §5.4d).
+    vinyl: bool,
+    /// Last record blend 0..1 (kept while the track fades out).
+    vinyl_mix: f32,
 }
 
 struct ThumbImages {
@@ -183,6 +188,10 @@ struct UiState {
     idle_views: IdleScheduler,
     /// Clock line on/off (setting, faded).
     clock: Spring,
+    /// Record view (SPEC §5.4d): cover <-> record blend and platter spin.
+    vinyl: Spring,
+    turntable: Turntable,
+    turntable_at: Instant,
     /// Lyrics available for the focus view (held while loading).
     focus_lyrics: bool,
     last_activity: Instant,
@@ -210,6 +219,9 @@ impl UiState {
             focus: Spring::new(0.0, 0.95, 0.94),
             idle_views: IdleScheduler::from_clock(),
             clock: Spring::smooth(1.0, 0.4),
+            vinyl: Spring::new(0.0, 0.9, 0.92),
+            turntable: Turntable::default(),
+            turntable_at: now,
             focus_lyrics: false,
             last_activity: now,
             wake: WakeGate::default(),
@@ -276,6 +288,8 @@ struct UiFrame {
     cover_lyrics: f32,
     focus: f32,
     clock: f32,
+    /// Record label rotation (radians).
+    spin: f32,
     scroll: f32,
     line_state: Option<LineState>,
     line_change: f32,
@@ -1061,6 +1075,7 @@ impl App {
     fn update_track(&mut self, s: &Session) {
         let key = (s.title.clone(), s.artist.clone(), s.album.clone());
         if self.current.as_ref().map(|t| &t.key) != Some(&key) {
+            let key_for_roll = key.clone();
             let album_key = (!s.album.trim().is_empty() && !s.artist.trim().is_empty())
                 .then(|| hash_of(hd::cache_name(&s.artist, &s.album)));
             tracing::info!(title = %s.display_title(), artist = %s.artist, "track change");
@@ -1071,17 +1086,28 @@ impl App {
                 artist: s.artist.clone(),
                 thumb_key: None,
                 album_key,
+                vinyl: self.args.demo_records
+                    || vinyl::roll(hash_of((&key_for_roll, SystemTime::now()))),
+                vinyl_mix: 0.0,
             });
             self.track_changed_at = Instant::now();
             self.ui.track.set(0.0);
             // No lyrics for ads (no title/artist) or when disabled (SPEC §5.6).
             let eligible = self.settings.lyrics.enabled
+                && !self.args.demo_records
                 && !s.title.trim().is_empty()
                 && !s.artist.trim().is_empty();
             self.lyrics.track_changed(self.track_changed_at, eligible);
             if eligible && self.demo.is_some() {
                 self.lyrics.set_found(lrc::parse(DEMO_LYRICS));
             }
+            // The new layer fades in, so its record blend starts settled.
+            let vinyl = self.vinyl_target();
+            self.ui.vinyl.set(f32::from(u8::from(vinyl)));
+            if let Some(c) = self.current.as_mut() {
+                c.vinyl_mix = f32::from(u8::from(vinyl));
+            }
+            tracing::debug!(record = vinyl, "record roll");
             self.request_hd(s, album_key);
             self.prune_images();
         }
@@ -1528,6 +1554,18 @@ impl App {
             .ui
             .clock
             .update(now, f32::from(u8::from(self.settings.show_clock)));
+        // Record view (SPEC §5.4d).
+        let vinyl_target = self.vinyl_target();
+        let vinyl_mix = self.ui.vinyl.update(now, f32::from(u8::from(vinyl_target)));
+        if let Some(c) = self.current.as_mut() {
+            c.vinyl_mix = vinyl_mix;
+        }
+        let dt = now
+            .saturating_duration_since(self.ui.turntable_at)
+            .as_secs_f32();
+        self.ui.turntable_at = now;
+        let spinning = self.frame_state() == FrameState::Playing;
+        let spin = self.ui.turntable.update(dt, spinning);
 
         UiFrame {
             view,
@@ -1540,6 +1578,7 @@ impl App {
             cover_lyrics,
             focus,
             clock,
+            spin,
             scroll,
             line_state: line_state.map(|(_, st)| st),
             line_change,
@@ -1726,6 +1765,12 @@ impl App {
         self.clock = Some((t, lang, time, date));
     }
 
+    /// Record instead of cover: this song's coin flip, and only once the
+    /// lyrics are known to be missing (not while they load).
+    fn vinyl_target(&self) -> bool {
+        self.current.as_ref().is_some_and(|c| c.vinyl) && self.lyrics.missing()
+    }
+
     fn track_view<'a>(&'a self, t: &'a TrackDisplay, alpha: f32, scale: f32) -> TrackView<'a> {
         let thumb = t.thumb_key.and_then(|k| self.thumbs.get(&k));
         let hd = t.album_key.and_then(|k| self.hd_images.get(&k));
@@ -1736,6 +1781,7 @@ impl App {
             small: thumb.and_then(|i| i.small.as_ref()),
             alpha,
             scale,
+            vinyl: t.vinyl_mix,
         }
     }
 
@@ -1826,6 +1872,7 @@ impl App {
             cover_lyrics_mix: frame.cover_lyrics,
             view: frame.view,
             focus: frame.focus,
+            spin: frame.spin,
             chat: self.chat_view(&frame, now),
             chat_mix: frame.chat_mix,
             stars: self.stars_view(&frame),

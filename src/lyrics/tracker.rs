@@ -96,6 +96,12 @@ impl LyricsTracker {
         }
     }
 
+    /// Lyrics are known to be unavailable for this track (not found, not
+    /// applicable or disabled); `false` while they load.
+    pub fn missing(&self) -> bool {
+        matches!(self.status, Status::Missing)
+    }
+
     /// Target of the player layout: split while lyrics are shown; while
     /// loading (max. 1.5 s) the previous layout stays.
     pub fn split_target(&mut self, now: Instant, show_in_player: bool) -> bool {

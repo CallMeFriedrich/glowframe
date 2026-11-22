@@ -69,6 +69,7 @@ cargo test
 - `--start`: Modus sofort starten.
 - `--exit-after <sek>`: Programm nach X Sekunden beenden. **Für eigene Testläufe immer verwenden.**
 - `--demo`: Fake-Spotify-Daten (Titel, Cover aus `assets/demo/`, eigenes Testbild, kein urheberrechtlich geschütztes Cover) und synthetischer 120-BPM-Beat. Damit lässt sich ohne Spotify testen. Die Ruhe-Ansichten wechseln im Demo-Modus schon nach 10–15 s statt 5 min ± 2 min.
+- `--demo-records`: wie `--demo`, aber ohne Lyrics und jeder Song zeigt die Schallplatte (§5.4d).
 - `--log-level <level>`: Log-Ausgabe.
 
 **Logs:** `%LOCALAPPDATA%\Glowframe\logs\` (portabel: neben der Exe), rotierend, die letzten 3.

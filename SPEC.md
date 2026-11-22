@@ -173,6 +173,14 @@ Lyrics als Sternbild: Ruhe-Ansicht im Lyrics-Stil „Sternbild“, nur mit synch
 - Das aktuelle Wort ist größer und heller mit leichtem Schein; ältere Sterne und Linien sind gedimmt. Farbe: erste Palettenfarbe (Akzent).
 - Zeilenwechsel: das alte Sternbild blendet aus und driftet leicht, das neue baut sich auf. Instrumentale Lücken: pulsierende Punkte.
 
+### 5.4d Schallplatte (v1.6)
+Abwechslung für Songs **ohne Lyrics** (keine gefunden, Werbung oder Lyrics ausgeschaltet).
+- **Wurf:** einmal pro Song 50:50, ob statt des Covers die Schallplatte gezeigt wird. Kein Wechsel mitten im Song; nur wenn sich die Lyrics-Suche zu Songbeginn als erfolglos herausstellt, morpht das Cover einmal weich zur Platte. Keine Einstellung.
+- **Optik:** schwarzes Vinyl mit feinen Rillen, zwei Rillen-Pausen und einem stehenden Lichtreflex. Das Albumcover ist rund ausgeschnitten das Label in der Mitte, mit Mittelloch und Ambient-Glow wie beim Cover.
+- **Drehung:** 33⅓ U/min (eine Umdrehung in 1,8 s), sichtbar am Label. Bei Pause läuft die Platte über einige Sekunden langsam aus; bei Play läuft sie in unter einer Sekunde wieder an.
+- **Player-Ansicht:** Die Platte ersetzt das Cover in gleicher Größe; alles andere bleibt.
+- **Ruhe-Ansicht:** Die Platte steht groß in der Mitte (wie das Cover in §5.4), Titel und Interpret stehen links unten in der Ecke. Die Uhrzeile bleibt oben.
+
 ### 5.5 Leuchtrahmen
 - **Form:** Er folgt dem rechteckigen Bildschirmrand mit leicht abgerundeten Ecken und leuchtet weich nach innen aus (Glow-Falloff, keine harte Linie).
 - **Rotation (v1.1, „Komet“):** Ein heller, kompakter **Kopf** (~12 % des Umfangs, weicher Vorlauf) zieht einen weich auslaufenden **Schweif** (~30 % des Umfangs) hinter sich her und **wandert im Uhrzeigersinn um den Monitor**: Start unten links, den linken Rand hoch, oben entlang, rechts hinunter, unten zurück.

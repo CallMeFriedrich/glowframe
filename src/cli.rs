@@ -10,6 +10,8 @@ pub struct CliArgs {
     pub exit_after: Option<Duration>,
     /// Use fake Spotify data and a synthetic 120 BPM beat.
     pub demo: bool,
+    /// Demo without lyrics where every song shows the record (SPEC §5.4d).
+    pub demo_records: bool,
     /// Log filter, e.g. `info`, `debug`, `glowframe=trace`.
     pub log_level: Option<String>,
 }
@@ -34,6 +36,10 @@ impl CliArgs {
             match flag.as_str() {
                 "--start" => out.start = true,
                 "--demo" => out.demo = true,
+                "--demo-records" => {
+                    out.demo = true;
+                    out.demo_records = true;
+                }
                 "--exit-after" => match inline.or_else(|| it.next()) {
                     Some(v) => match v.trim().parse::<f64>() {
                         Ok(secs) if secs.is_finite() && secs > 0.0 => {

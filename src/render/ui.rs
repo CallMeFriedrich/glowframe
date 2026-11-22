@@ -22,6 +22,7 @@ use windows::Win32::Graphics::Direct2D::{
 
 mod chat;
 mod stars;
+mod vinyl;
 
 /// Constellation view (SPEC §5.4c).
 pub struct StarsView<'a> {
@@ -80,6 +81,8 @@ pub struct TrackView<'a> {
     pub alpha: f32,
     /// Scale of the cover around its center (spring-in of a new cover).
     pub scale: f32,
+    /// 0 = cover, 1 = record (SPEC §5.4d).
+    pub vinyl: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -172,6 +175,8 @@ pub struct UiModel<'a> {
     pub view: f32,
     /// Idle view: 0 = cover view, 1 = lyrics focus view (SPEC §5.4a).
     pub focus: f32,
+    /// Record label rotation in radians (SPEC §5.4d).
+    pub spin: f32,
     /// Messages view (SPEC §5.4b) and its blend over the classic idle views.
     pub chat: Option<ChatView<'a>>,
     pub chat_mix: f32,
@@ -233,6 +238,7 @@ pub struct UiResources {
     focus_artist: IDWriteTextFormat,
     chat: chat::ChatFormats,
     stars: stars::StarFormats,
+    corner: vinyl::CornerFormats,
     factory: ID2D1Factory,
     brush: ID2D1SolidColorBrush,
     /// Extra brushes for word-by-word reveal (drawing effects).
@@ -386,6 +392,7 @@ impl UiResources {
                 )?,
                 chat: chat::ChatFormats::new(dwrite, &ui_font, &icon_font, w, h)?,
                 stars: stars::StarFormats::new(dwrite, &ui_font, h)?,
+                corner: vinyl::CornerFormats::new(dwrite, &ui_font, h)?,
                 factory: ctx.GetFactory()?,
                 brush: ctx.CreateSolidColorBrush(&white, None)?,
                 brush_hi: ctx.CreateSolidColorBrush(&white, None)?,
@@ -1184,12 +1191,16 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
             if let Some(s) = t.small {
                 p.ambient(s, cr, 1.25, 0.55 * a);
             }
-            p.cover(t.image.map(|i| i.as_ref()), cr, a);
+            let v = t.vinyl.clamp(0.0, 1.0);
+            let ca = a * (1.0 - v);
+            p.cover(t.image.map(|i| i.as_ref()), cr, ca);
             p.rounded(
                 cr,
                 cr.w * 0.035,
-                color(0.02, 0.02, 0.03, 0.42 * m.pause * a),
+                color(0.02, 0.02, 0.03, 0.42 * m.pause * ca),
             );
+            let img = t.image.map(|i| i.as_ref());
+            vinyl::draw_record(&p, img, cr, m.spin, m.pause, a * v);
             p.text(t.title, &res.title, l.title, color(1.0, 1.0, 1.0, 0.95 * a));
             p.text(
                 t.artist,
@@ -1253,12 +1264,17 @@ pub fn draw(ctx: &ID2D1DeviceContext, res: &UiResources, m: &UiModel) {
             if let Some(s) = t.small {
                 p.ambient(s, cr, grow, 0.6 * a);
             }
-            p.cover(t.image.map(|i| i.as_ref()), cr, a);
+            let v = t.vinyl.clamp(0.0, 1.0);
+            let ca = a * (1.0 - v);
+            p.cover(t.image.map(|i| i.as_ref()), cr, ca);
             p.rounded(
                 cr,
                 cr.w * 0.035,
-                color(0.02, 0.02, 0.03, 0.42 * m.pause * a),
+                color(0.02, 0.02, 0.03, 0.42 * m.pause * ca),
             );
+            let img = t.image.map(|i| i.as_ref());
+            vinyl::draw_record(&p, img, cr, m.spin, m.pause, a * v);
+            vinyl::draw_corner_text(&p, t.title, t.artist, a * v * (1.0 - fa));
             let ta = a * fa;
             if ta > 0.0 {
                 let up = |x: Rect| Rect { y: x.y + rise, ..x };
