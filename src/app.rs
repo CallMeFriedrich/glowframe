@@ -33,8 +33,8 @@ use crate::render::ui::{
 use crate::render::ui::{ChainStar, ChainView, CodeView, StarsView, WordView};
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
-use crate::settings::model::Rgb;
 use crate::settings::model::{BackgroundMode, Language, LyricsStyle};
+use crate::settings::model::{Rgb, WordColorMode};
 use crate::settings::paths::Paths;
 use crate::settings::store;
 use crate::settings::{MonitorMode, Settings};
@@ -1915,8 +1915,8 @@ impl App {
             return;
         }
         let l = &mut self.settings.lyrics;
-        l.word_custom = !l.word_custom;
-        tracing::info!(custom = l.word_custom, "one-word colors");
+        l.word_colors = l.word_colors.next();
+        tracing::info!(mode = ?l.word_colors, "one-word colors");
         self.save_due = Some(Instant::now() + SAVE_DELAY);
         if let Some(sw) = &self.settings_window {
             sw.request_redraw();
@@ -1986,19 +1986,27 @@ impl App {
         let (_, words) = self.lyrics_ui.words.as_ref()?;
         let k = frame.word;
         let ls = &self.settings.lyrics;
-        let (color, background) = if ls.word_custom {
-            // Own pair: A on B, then B on A (SPEC §5.4f v1.7).
-            let rgb = |c: Rgb| [c.0, c.1, c.2].map(|x| f32::from(x) / 255.0);
-            let (a, b) = (rgb(ls.word_a), rgb(ls.word_b));
+        // Pairs alternate: A on B, then B on A (SPEC §5.4f).
+        let alternate = |(a, b): ([f32; 3], [f32; 3])| {
             if k.is_some_and(|k| k % 2 == 1) {
                 (b, a)
             } else {
                 (a, b)
             }
-        } else {
-            let colors = crate::ui::word::word_colors(self.palette_srgb(now));
-            let c = colors[k.map_or(0, |k| k % colors.len())];
-            (c, crate::ui::word::invert(c))
+        };
+        let (color, background) = match ls.word_colors {
+            WordColorMode::Custom => {
+                let rgb = |c: Rgb| [c.0, c.1, c.2].map(|x| f32::from(x) / 255.0);
+                alternate((rgb(ls.word_a), rgb(ls.word_b)))
+            }
+            WordColorMode::CoverPair => {
+                alternate(crate::ui::word::cover_pair(self.palette_srgb(now)))
+            }
+            WordColorMode::Cover => {
+                let colors = crate::ui::word::word_colors(self.palette_srgb(now));
+                let c = colors[k.map_or(0, |k| k % colors.len())];
+                (c, crate::ui::word::invert(c))
+            }
         };
         let gap = frame.line_state.is_some_and(|s| s.gap);
         Some(WordView {

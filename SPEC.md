@@ -195,7 +195,10 @@ Lyrics-Stil „Code“ (Taste 5): Die Lyrics werden wie Code in einem Editor get
 Lyrics-Stil „Ein Wort“ (Taste 6): Ruhe-Ansicht, nur mit synchronisierten Lyrics.
 - Immer nur **ein Wort** groß und fett in der Mitte (Satzzeichen am Rand entfernt). Lange Wörter werden verkleinert, bis sie in die Breite passen. Die Wortzeiten werden wie in §5.4b über die Zeile verteilt.
 - **Farben:** Jedes Wort bekommt die nächste Farbe aus einer Reihe, der **ganze Bildschirm** die invertierte Farbe (weißes Wort auf Schwarz, schwarzes auf Weiß, Rot auf Cyan …). Der Leuchtrahmen ist dabei verdeckt. Die Reihe besteht aus Weiß und den Cover-Farben; liefert das Cover wenige unterschiedliche Farben, kommen farbtonverschobene Varianten der Hauptfarbe dazu. Mittlere Töne werden aufgehellt oder abgedunkelt, damit Wort und Hintergrund immer deutlich kontrastieren.
-- **Eigenes Farbpaar (v1.7):** In den Einstellungen lassen sich Farbe A und Farbe B wählen; die Wörter wechseln dann A auf B, B auf A. Die **Tab-Taste** schaltet in der Ansicht zwischen Cover-Farben und eigenem Paar um (gespeichert).
+- **Farbmodus (v1.7/v1.8):** drei Modi, in den Einstellungen wählbar und mit der **Tab-Taste** in der Ansicht reihum umschaltbar (gespeichert):
+  1. **Cover-Farben:** Farbreihe wie oben, Hintergrund invertiert.
+  2. **Eigenes Paar:** Farbe A und Farbe B aus den Einstellungen; die Wörter wechseln A auf B, B auf A.
+  3. **Zwei Cover-Farben:** die zwei Farben der Cover-Palette mit dem stärksten Kontrast, ebenfalls abwechselnd A auf B, B auf A. Liegen sie zu nah beieinander, wird die hellere aufgehellt und die dunklere abgedunkelt.
 - **Wechsel:** harter Schnitt bei jedem Wort, ohne Begrenzung der Wechselrate (Wunsch des Projektinhabers; Hinweis zu Lichtempfindlichkeit im README).
 - Die Uhrzeile bleibt oben, in der Wortfarbe. Instrumentale Lücken: pulsierende Punkte in der aktuellen Wortfarbe.
 

@@ -145,6 +145,30 @@ impl LyricsStyle {
     }
 }
 
+/// Colors of the one-word view (SPEC §5.4f), cycled with Tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WordColorMode {
+    /// Color sequence from the cover, background inverted.
+    #[default]
+    Cover,
+    /// Own pair A/B from the settings.
+    Custom,
+    /// The two cover colors with the strongest contrast.
+    CoverPair,
+}
+
+impl WordColorMode {
+    /// Next mode for the Tab key.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Cover => Self::Custom,
+            Self::Custom => Self::CoverPair,
+            Self::CoverPair => Self::Cover,
+        }
+    }
+}
+
 /// Background of the animation monitors (SPEC §5.1 v1.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -192,8 +216,10 @@ pub struct LyricsSettings {
     pub style: LyricsStyle,
     /// Constellation V2: words visible at once (SPEC §5.4c2, 5..=40).
     pub chain_words: u8,
-    /// One-word view: own color pair instead of the cover colors
-    /// (SPEC §5.4f, toggled with Tab).
+    /// One-word view colors (SPEC §5.4f, cycled with Tab).
+    pub word_colors: WordColorMode,
+    /// v0.1.9 setting, migrated into `word_colors`; not written any more.
+    #[serde(skip_serializing)]
     pub word_custom: bool,
     pub word_a: Rgb,
     pub word_b: Rgb,
@@ -208,6 +234,7 @@ impl Default for LyricsSettings {
             offset_ms: 0,
             style: LyricsStyle::Classic,
             chain_words: 30,
+            word_colors: WordColorMode::Cover,
             word_custom: false,
             word_a: Rgb(0xFF, 0xFF, 0xFF),
             word_b: Rgb(0x00, 0x00, 0x00),
@@ -275,6 +302,10 @@ impl Settings {
         }
         self.lyrics.offset_ms = self.lyrics.offset_ms.clamp(-2000, 2000);
         self.lyrics.chain_words = self.lyrics.chain_words.clamp(5, 40);
+        // v0.1.9 stored the own pair as a bool.
+        if std::mem::take(&mut self.lyrics.word_custom) {
+            self.lyrics.word_colors = WordColorMode::Custom;
+        }
         self.background.dim = self.background.dim.min(90);
         if self.hotkey.trim().is_empty() {
             self.hotkey = Settings::default().hotkey;
@@ -301,6 +332,24 @@ mod tests {
         assert_eq!(s.monitor_mode("B", false), MonitorMode::Black);
         s.monitors.insert("B".into(), MonitorMode::Free);
         assert_eq!(s.monitor_mode("B", false), MonitorMode::Free);
+    }
+
+    #[test]
+    fn old_word_custom_migrates() {
+        let mut s: Settings =
+            serde_json::from_str(r#"{"lyrics":{"word_custom":true}}"#).unwrap_or_default();
+        s.sanitize();
+        assert_eq!(s.lyrics.word_colors, WordColorMode::Custom);
+        let json = serde_json::to_string(&s).unwrap_or_default();
+        assert!(!json.contains("word_custom"));
+    }
+
+    #[test]
+    fn word_color_modes_cycle() {
+        let m = WordColorMode::Cover;
+        assert_eq!(m.next(), WordColorMode::Custom);
+        assert_eq!(m.next().next(), WordColorMode::CoverPair);
+        assert_eq!(m.next().next().next(), WordColorMode::Cover);
     }
 
     #[test]

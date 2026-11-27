@@ -6,7 +6,7 @@ use egui::{Color32, RichText, Ui};
 use super::hotkey_rec::{self, RecordError};
 use crate::i18n::I18n;
 use crate::settings::model::{
-    BackgroundMode, ColorMode, Language, LyricsStyle, PalettePreset, Rgb,
+    BackgroundMode, ColorMode, Language, LyricsStyle, PalettePreset, Rgb, WordColorMode,
 };
 use crate::settings::{MonitorMode, Settings};
 
@@ -308,10 +308,20 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                             ui.label(i18n.t("settings.chain_words"));
                             ui.add(egui::Slider::new(&mut l.chain_words, 5..=40));
                         });
-                        // One word: own color pair (Tab switches in the view).
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut l.word_custom, i18n.t("settings.word_custom"));
-                            ui.add_enabled_ui(l.word_custom, |ui| {
+                        // One word: color mode (Tab cycles it in the view).
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(i18n.t("settings.word_colors"));
+                            ui.radio_value(
+                                &mut l.word_colors,
+                                WordColorMode::Cover,
+                                i18n.t("settings.word_cover"),
+                            );
+                            ui.radio_value(
+                                &mut l.word_colors,
+                                WordColorMode::Custom,
+                                i18n.t("settings.word_custom"),
+                            );
+                            ui.add_enabled_ui(l.word_colors == WordColorMode::Custom, |ui| {
                                 for c in [&mut l.word_a, &mut l.word_b] {
                                     let mut rgb = [c.0, c.1, c.2];
                                     if egui::color_picker::color_edit_button_srgb(ui, &mut rgb)
@@ -321,6 +331,11 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                                     }
                                 }
                             });
+                            ui.radio_value(
+                                &mut l.word_colors,
+                                WordColorMode::CoverPair,
+                                i18n.t("settings.word_cover_pair"),
+                            );
                         });
                         ui.label(
                             egui::RichText::new(i18n.t("settings.word_hint"))
