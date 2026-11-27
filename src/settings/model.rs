@@ -190,6 +190,13 @@ pub struct LyricsSettings {
     pub in_cover: bool,
     pub offset_ms: i32,
     pub style: LyricsStyle,
+    /// Constellation V2: words visible at once (SPEC §5.4c2, 5..=40).
+    pub chain_words: u8,
+    /// One-word view: own color pair instead of the cover colors
+    /// (SPEC §5.4f, toggled with Tab).
+    pub word_custom: bool,
+    pub word_a: Rgb,
+    pub word_b: Rgb,
 }
 
 impl Default for LyricsSettings {
@@ -200,6 +207,10 @@ impl Default for LyricsSettings {
             in_cover: true,
             offset_ms: 0,
             style: LyricsStyle::Classic,
+            chain_words: 30,
+            word_custom: false,
+            word_a: Rgb(0xFF, 0xFF, 0xFF),
+            word_b: Rgb(0x00, 0x00, 0x00),
         }
     }
 }
@@ -263,6 +274,7 @@ impl Settings {
             *v = (*v).min(100);
         }
         self.lyrics.offset_ms = self.lyrics.offset_ms.clamp(-2000, 2000);
+        self.lyrics.chain_words = self.lyrics.chain_words.clamp(5, 40);
         self.background.dim = self.background.dim.min(90);
         if self.hotkey.trim().is_empty() {
             self.hotkey = Settings::default().hotkey;

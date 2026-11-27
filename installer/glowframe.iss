@@ -49,7 +49,7 @@ Name: "{autoprograms}\Glowframe"; Filename: "{app}\Glowframe.exe"
 [Run]
 Filename: "{app}\Glowframe.exe"; Description: "{cm:LaunchProgram,Glowframe}"; Flags: nowait postinstall skipifsilent
 ; In-app update (SPEC 6.5): silent install with /relaunch=1 restarts the app.
-Filename: "{app}\Glowframe.exe"; Flags: nowait; Check: ShouldRelaunch
+Filename: "{app}\Glowframe.exe"; Parameters: "--tray"; Flags: nowait; Check: ShouldRelaunch
 
 [Code]
 function ShouldRelaunch: Boolean;

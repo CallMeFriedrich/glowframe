@@ -9,7 +9,7 @@ use crate::lyrics::LyricLine;
 use crate::ui::chat::word_starts;
 use crate::ui::stars::{AREA, Rng, dist};
 
-/// Words fully visible at once.
+/// Words fully visible at once by default (setting, 5..=40).
 pub const MAX_WORDS: usize = 30;
 /// Song seconds an old word takes to fade out once pushed out.
 pub const FADE_SECS: f32 = 6.0;
@@ -188,11 +188,25 @@ pub struct StarChain {
     /// Words revealed at the last update.
     revealed: usize,
     pos: Duration,
+    /// Words fully visible at once (setting).
+    max_words: usize,
 }
 
 impl StarChain {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            max_words: MAX_WORDS,
+            ..Self::default()
+        }
+    }
+
+    /// Words fully visible at once (5..=40).
+    pub fn set_max_words(&mut self, n: usize) {
+        self.max_words = n.clamp(5, 40);
+    }
+
+    pub fn max_words(&self) -> usize {
+        self.max_words
     }
 
     /// Follows the song position `pos` of lyrics `id`. Words get placed
@@ -211,9 +225,9 @@ impl StarChain {
             self.placed.pop_back();
         }
         let next = self.placed.back().map_or(0, |p| p.k + 1);
-        let start = if n > next + REBUILD_JUMP || (self.placed.is_empty() && n > MAX_WORDS) {
+        let start = if n > next + REBUILD_JUMP || (self.placed.is_empty() && n > self.max_words) {
             self.placed.clear();
-            n.saturating_sub(MAX_WORDS)
+            n.saturating_sub(self.max_words)
         } else {
             next
         };
@@ -236,7 +250,7 @@ impl StarChain {
     /// Fade-out of word `k` (0 = fully visible, 1 = gone): it starts when
     /// the 30th word after it appears.
     pub fn fade(&self, k: usize) -> f32 {
-        match self.words.get(k + MAX_WORDS) {
+        match self.words.get(k + self.max_words) {
             Some(w) if w.appear <= self.pos => {
                 ((self.pos - w.appear).as_secs_f32() / FADE_SECS).min(1.0)
             }
@@ -366,6 +380,18 @@ mod tests {
         let n = c.newest().unwrap();
         assert!(c.placed().all(|p| p.k <= n));
         assert_eq!(c.placed().last().map(|p| p.k), Some(n));
+    }
+
+    #[test]
+    fn visible_count_follows_the_setting() {
+        let lines = song();
+        let mut c = StarChain::new();
+        c.set_max_words(8);
+        c.update(1, &lines, Duration::from_secs(1), 1.78);
+        c.update(1, &lines, Duration::from_secs(100), 1.78);
+        assert_eq!(c.placed().count(), 8);
+        c.set_max_words(99);
+        assert_eq!(c.max_words(), 40);
     }
 
     #[test]

@@ -102,14 +102,17 @@ Install the new version over the old one (installer) or replace
 ## Getting started
 
 1. Start Spotify and play something.
-2. Start Glowframe. It runs as an icon in the system tray (bottom right; it
+2. Start Glowframe (e.g. via the Windows search). The fullscreen mode opens
+   right away; starting it again while it runs brings the show back. When it
+   starts with Windows it stays quietly in the system tray (bottom right; it
    may be hidden behind the **^** arrow).
-3. Start the fullscreen mode with **Ctrl+Alt+L**, by double-clicking the tray
-   icon, or via right-click → **Start**.
+3. From the tray, start the fullscreen mode with **Ctrl+Alt+L**, by
+   double-clicking the tray icon, or via right-click → **Start**.
 4. Move the mouse to see the player and its controls. After 5 seconds without
    movement the cover view appears.
-5. Press **1**, **2** or **3** to switch the lyrics style (classic, messages,
-   constellation).
+5. Press **1**–**6** to switch the lyrics style (classic, messages,
+   constellation, constellation V2, code, one word). In the one-word style,
+   **Tab** switches between cover colors and your own color pair.
 6. Press **Esc twice** (or Ctrl+Alt+L again) to leave the fullscreen mode.
 
 Right-click the tray icon for **Start/Stop**, **Settings** and **Quit**.
@@ -129,7 +132,7 @@ the fullscreen mode is running, and are saved automatically.
 | Monitors | Per monitor: **Animation** (frame and player), **Black**, or **Free** (not covered). Default: primary monitor animation, others black |
 | View | Time until the cover view (2–60 s), show date and time on/off |
 | Frame | Brightness, width, rotation speed, beat reaction (0 % turns the beat off), color mode (cover colors or a fixed palette: Neon Pink, Ocean, Sunset, Mono, custom colors) |
-| Lyrics | On/off, in player view, in cover view, style (classic/messages/constellation), timing offset (−2000 to +2000 ms) |
+| Lyrics | On/off, in player view, in cover view, style (classic/messages/constellation/constellation V2/code/one word), words visible in constellation V2 (5–40), own color pair for the one-word style, timing offset (−2000 to +2000 ms) |
 | Cover | Load HD covers |
 
 ## Privacy

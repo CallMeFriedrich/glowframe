@@ -303,6 +303,30 @@ pub fn show(ui: &mut Ui, s: &mut Settings, i18n: &I18n, info: &PanelInfo) -> Vec
                                 i18n.t("settings.style_word"),
                             );
                         });
+                        // Constellation V2: words visible at once (5-40).
+                        ui.horizontal(|ui| {
+                            ui.label(i18n.t("settings.chain_words"));
+                            ui.add(egui::Slider::new(&mut l.chain_words, 5..=40));
+                        });
+                        // One word: own color pair (Tab switches in the view).
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut l.word_custom, i18n.t("settings.word_custom"));
+                            ui.add_enabled_ui(l.word_custom, |ui| {
+                                for c in [&mut l.word_a, &mut l.word_b] {
+                                    let mut rgb = [c.0, c.1, c.2];
+                                    if egui::color_picker::color_edit_button_srgb(ui, &mut rgb)
+                                        .changed()
+                                    {
+                                        *c = Rgb(rgb[0], rgb[1], rgb[2]);
+                                    }
+                                }
+                            });
+                        });
+                        ui.label(
+                            egui::RichText::new(i18n.t("settings.word_hint"))
+                                .small()
+                                .weak(),
+                        );
                     });
                     egui::CollapsingHeader::new(i18n.t("settings.advanced"))
                         .id_salt("lyrics_advanced")

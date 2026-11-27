@@ -65,6 +65,8 @@ pub struct ChainView<'a> {
     /// Placed stars, oldest first.
     pub stars: Vec<ChainStar<'a>>,
     pub newest: usize,
+    /// Words fully visible at once (setting).
+    pub max_words: usize,
     /// Instrumental gap: the stars twinkle.
     pub gap: bool,
     /// Fade-out on song change.

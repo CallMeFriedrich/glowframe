@@ -12,7 +12,8 @@ const VALUE: windows::core::PCWSTR = w!("Glowframe");
 
 /// Command line stored in the Run key for `exe`.
 pub fn command_for(exe: &std::path::Path) -> String {
-    format!("\"{}\"", exe.display())
+    // `--tray`: the autostart stays quiet in the tray (SPEC §4 v1.7).
+    format!("\"{}\" --tray", exe.display())
 }
 
 fn current_command() -> Option<String> {
@@ -86,10 +87,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn command_is_quoted() {
+    fn command_is_quoted_and_quiet() {
         let c = command_for(std::path::Path::new(
             r"C:\Program Files\Glowframe\Glowframe.exe",
         ));
-        assert_eq!(c, r#""C:\Program Files\Glowframe\Glowframe.exe""#);
+        assert_eq!(c, r#""C:\Program Files\Glowframe\Glowframe.exe" --tray"#);
     }
 }

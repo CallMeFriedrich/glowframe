@@ -56,8 +56,12 @@ fn main() {
     }
 
     let guard = match single_instance::acquire() {
+        Some(Instance::Secondary) if args.tray => {
+            tracing::info!("already running, quiet start ends");
+            return;
+        }
         Some(Instance::Secondary) => {
-            tracing::info!("already running, asking primary instance to show settings");
+            tracing::info!("already running, asking primary instance to start the show");
             single_instance::signal_primary();
             return;
         }
@@ -85,7 +89,7 @@ fn run(
     if let Some(guard) = guard {
         let proxy = event_loop.create_proxy();
         guard.listen(move || {
-            let _ = proxy.send_event(UserEvent::ShowSettings);
+            let _ = proxy.send_event(UserEvent::ShowRequested);
         });
     }
 

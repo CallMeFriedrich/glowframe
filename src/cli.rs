@@ -8,6 +8,9 @@ pub struct CliArgs {
     pub start: bool,
     /// Quit the whole program after this duration.
     pub exit_after: Option<Duration>,
+    /// Start quietly in the tray (autostart, restart after an update);
+    /// without it a start opens the show (SPEC §4 v1.7).
+    pub tray: bool,
     /// Use fake Spotify data and a synthetic 120 BPM beat.
     pub demo: bool,
     /// Demo without lyrics where every song shows the record (SPEC §5.4d).
@@ -35,6 +38,7 @@ impl CliArgs {
             };
             match flag.as_str() {
                 "--start" => out.start = true,
+                "--tray" => out.tray = true,
                 "--demo" => out.demo = true,
                 "--demo-records" => {
                     out.demo = true;
@@ -63,6 +67,13 @@ impl CliArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_flag() {
+        let (a, w) = CliArgs::parse(["--tray"]);
+        assert!(w.is_empty());
+        assert!(a.tray && !a.start);
+    }
 
     #[test]
     fn empty() {

@@ -33,6 +33,7 @@ use crate::render::ui::{
 use crate::render::ui::{ChainStar, ChainView, CodeView, StarsView, WordView};
 use crate::render::{FrameResult, Gpu, Surface};
 use crate::settings::model::ColorMode;
+use crate::settings::model::Rgb;
 use crate::settings::model::{BackgroundMode, Language, LyricsStyle};
 use crate::settings::paths::Paths;
 use crate::settings::store;
@@ -124,7 +125,8 @@ pub enum Mode {
 #[derive(Debug, Clone)]
 pub enum UserEvent {
     /// A second instance was started.
-    ShowSettings,
+    /// Another start of the program: open the show (SPEC §4 v1.7).
+    ShowRequested,
     /// `--exit-after` elapsed.
     Quit,
     TrayDoubleClick,
@@ -498,7 +500,9 @@ impl App {
             }));
         }
 
-        if self.args.start {
+        // A manual start opens the show; autostart and update restarts
+        // pass --tray and stay quiet (SPEC §4 v1.7).
+        if self.args.start || !self.args.tray {
             self.activate(event_loop);
         }
     }
@@ -524,6 +528,18 @@ impl App {
     }
 
     // ----- mode -----
+
+    /// Second start of the program: start the show, or bring it to the
+    /// front if it is already running.
+    fn show_requested(&mut self, event_loop: &ActiveEventLoop) {
+        if self.mode == Mode::Active {
+            for w in &self.windows {
+                fullscreen::focus(&w.window);
+            }
+        } else {
+            self.activate(event_loop);
+        }
+    }
 
     fn activate(&mut self, event_loop: &ActiveEventLoop) {
         if self.mode == Mode::Active {
@@ -1587,6 +1603,8 @@ impl App {
             match (&found, lyrics_pos) {
                 (Some(l), Some(pos)) => {
                     let aspect = self.chain_aspect();
+                    let max = usize::from(ls.chain_words);
+                    self.lyrics_ui.chain.set_max_words(max);
                     self.lyrics_ui.chain.update(l.id, &l.lines, pos, aspect);
                     self.lyrics_ui.chain_gone = None;
                 }
@@ -1882,9 +1900,27 @@ impl App {
         Some(ChainView {
             stars,
             newest: newest.unwrap_or(0),
+            max_words: c.max_words(),
             gap: frame.line_state.is_some_and(|s| s.gap),
             alpha: alpha.clamp(0.0, 1.0),
         })
+    }
+
+    /// Tab in the one-word view: cover colors <-> own pair (saved).
+    fn toggle_word_colors(&mut self) {
+        let visible = self.mode == Mode::Active
+            && self.settings.lyrics.style == LyricsStyle::OneWord
+            && self.lyrics_ui.word_mix.value() > 0.5;
+        if !visible {
+            return;
+        }
+        let l = &mut self.settings.lyrics;
+        l.word_custom = !l.word_custom;
+        tracing::info!(custom = l.word_custom, "one-word colors");
+        self.save_due = Some(Instant::now() + SAVE_DELAY);
+        if let Some(sw) = &self.settings_window {
+            sw.request_redraw();
+        }
     }
 
     /// Keys 1-9: lyrics style by number (SPEC §4 v1.5, saved).
@@ -1948,9 +1984,22 @@ impl App {
             return None;
         }
         let (_, words) = self.lyrics_ui.words.as_ref()?;
-        let colors = crate::ui::word::word_colors(self.palette_srgb(now));
         let k = frame.word;
-        let color = colors[k.map_or(0, |k| k % colors.len())];
+        let ls = &self.settings.lyrics;
+        let (color, background) = if ls.word_custom {
+            // Own pair: A on B, then B on A (SPEC §5.4f v1.7).
+            let rgb = |c: Rgb| [c.0, c.1, c.2].map(|x| f32::from(x) / 255.0);
+            let (a, b) = (rgb(ls.word_a), rgb(ls.word_b));
+            if k.is_some_and(|k| k % 2 == 1) {
+                (b, a)
+            } else {
+                (a, b)
+            }
+        } else {
+            let colors = crate::ui::word::word_colors(self.palette_srgb(now));
+            let c = colors[k.map_or(0, |k| k % colors.len())];
+            (c, crate::ui::word::invert(c))
+        };
         let gap = frame.line_state.is_some_and(|s| s.gap);
         Some(WordView {
             text: k
@@ -1958,7 +2007,7 @@ impl App {
                 .and_then(|k| words.get(k))
                 .map_or("", |w| crate::ui::word::display(&w.text)),
             color,
-            background: crate::ui::word::invert(color),
+            background,
             gap,
         })
     }
@@ -2164,7 +2213,7 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::ShowSettings => self.show_settings(event_loop),
+            UserEvent::ShowRequested => self.show_requested(event_loop),
             UserEvent::Quit => self.quit(event_loop),
             UserEvent::TrayDoubleClick => self.activate(event_loop),
             UserEvent::Hotkey(id) => {
@@ -2228,6 +2277,13 @@ impl ApplicationHandler<UserEvent> for App {
                     && event.logical_key == Key::Named(NamedKey::Escape) =>
             {
                 self.on_escape();
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed
+                    && !event.repeat
+                    && event.logical_key == Key::Named(NamedKey::Tab) =>
+            {
+                self.toggle_word_colors();
             }
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed

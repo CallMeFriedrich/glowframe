@@ -77,7 +77,8 @@ Vorbild: das Instagram-Reel mit „Lumn“ und dem Song „Flashing Lights“. D
 
 ### Einzelinstanz
 - **Mechanismus:** benannter Mutex.
-- **Zweiter Start:** Läuft das Programm schon, öffnet ein erneuter Start die Einstellungen der laufenden Instanz und beendet sich selbst.
+- **Start (v1.7):** Ein manueller Start (Windows-Suche, Startmenü, Verknüpfung) öffnet sofort die Show. Läuft das Programm schon, startet ein erneuter Start die Show der laufenden Instanz (bzw. holt sie nach vorn) und beendet sich selbst. Die Einstellungen öffnet man über das Tray-Menü.
+- **Still im Tray:** Autostart mit Windows und der Neustart nach einem Update starten mit `--tray` und öffnen keine Show; ein solcher Start bei schon laufender Instanz tut nichts.
 
 ## 5. Vollbild-Modus
 
@@ -175,7 +176,7 @@ Lyrics als Sternbild: Ruhe-Ansicht im Lyrics-Stil „Sternbild“, nur mit synch
 
 ### 5.4c2 Sternbild V2 (v1.6)
 Eigener Lyrics-Stil „Sternbild V2“ (Taste 4); V1 (§5.4c) bleibt unverändert. Gleiche Sterne, Linien, Federn und Farben wie V1, mit diesen Unterschieden:
-- **Durchgehende Kette:** Die Wörter werden über Zeilenwechsel hinweg aneinandergereiht; das erste Wort einer Zeile verbindet sich mit dem letzten der vorigen. Bis zu **30 Wörter** sind gleichzeitig sichtbar; jedes weitere lässt das älteste ganz langsam (über ~6 s) ausblenden. Ältere Linien werden nach hinten hin dunkler.
+- **Durchgehende Kette:** Die Wörter werden über Zeilenwechsel hinweg aneinandergereiht; das erste Wort einer Zeile verbindet sich mit dem letzten der vorigen. Bis zu **30 Wörter** (einstellbar 5–40, v1.7) sind gleichzeitig sichtbar; jedes weitere lässt das älteste ganz langsam (über ~6 s) ausblenden. Ältere Linien werden nach hinten hin dunkler.
 - **Platzierung:** Jeder neue Stern landet an einem zufälligen freien Punkt des ganzen Bildschirms (Mindestabstand zu allen sichtbaren Sternen, begrenzte Linienlänge). **Kreuzungen der Linien sind erlaubt.**
 - **Schlagworte** werden etwa 1,5× größer und fett dargestellt, ihr Stern etwas größer. Erkennung pro Song: Jedes Wort bekommt Punkte nach Häufigkeit im ganzen Song und Wortlänge; Füllwörter (DE/EN-Liste) und Wörter unter 3 Buchstaben zählen nie. Die besten ~15 % der verschiedenen Wörter sind Schlagworte.
 - **Instrumentale Lücken:** Das Sternbild bleibt stehen, die Sterne funkeln leicht; danach geht die Kette weiter. Beim Songwechsel blendet die Kette aus. Beim Zurückspulen verschwinden die noch nicht gesungenen Wörter; nach einem großen Sprung nach vorn wird die Kette neu aufgebaut.
@@ -194,6 +195,7 @@ Lyrics-Stil „Code“ (Taste 5): Die Lyrics werden wie Code in einem Editor get
 Lyrics-Stil „Ein Wort“ (Taste 6): Ruhe-Ansicht, nur mit synchronisierten Lyrics.
 - Immer nur **ein Wort** groß und fett in der Mitte (Satzzeichen am Rand entfernt). Lange Wörter werden verkleinert, bis sie in die Breite passen. Die Wortzeiten werden wie in §5.4b über die Zeile verteilt.
 - **Farben:** Jedes Wort bekommt die nächste Farbe aus einer Reihe, der **ganze Bildschirm** die invertierte Farbe (weißes Wort auf Schwarz, schwarzes auf Weiß, Rot auf Cyan …). Der Leuchtrahmen ist dabei verdeckt. Die Reihe besteht aus Weiß und den Cover-Farben; liefert das Cover wenige unterschiedliche Farben, kommen farbtonverschobene Varianten der Hauptfarbe dazu. Mittlere Töne werden aufgehellt oder abgedunkelt, damit Wort und Hintergrund immer deutlich kontrastieren.
+- **Eigenes Farbpaar (v1.7):** In den Einstellungen lassen sich Farbe A und Farbe B wählen; die Wörter wechseln dann A auf B, B auf A. Die **Tab-Taste** schaltet in der Ansicht zwischen Cover-Farben und eigenem Paar um (gespeichert).
 - **Wechsel:** harter Schnitt bei jedem Wort, ohne Begrenzung der Wechselrate (Wunsch des Projektinhabers; Hinweis zu Lichtempfindlichkeit im README).
 - Die Uhrzeile bleibt oben, in der Wortfarbe. Instrumentale Lücken: pulsierende Punkte in der aktuellen Wortfarbe.
 

@@ -263,9 +263,8 @@ pub(super) fn draw_chain(p: &Painter, m: &UiModel, v: &ChainView, base: &Matrix3
     let star_r = h * 0.0085;
     let line_w = (h * 0.0018).max(1.0);
     // Recency 1 (newest) .. 0 (30 words back).
-    let recency = |s: &ChainStar| {
-        1.0 - (v.newest.saturating_sub(s.k) as f32 / crate::ui::chain::MAX_WORDS as f32).min(1.0)
-    };
+    let recency =
+        |s: &ChainStar| 1.0 - (v.newest.saturating_sub(s.k) as f32 / v.max_words as f32).min(1.0);
     // Instrumental gap: gentle twinkle, different phase per star.
     let twinkle = |s: &ChainStar| {
         if v.gap {

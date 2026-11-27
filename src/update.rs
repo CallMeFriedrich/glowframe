@@ -262,7 +262,7 @@ fn install_portable(zip: &Path, dir: &Path) -> Result<(), String> {
         return Err(e.to_string());
     }
     after_exit(&format!(
-        "Start-Process -FilePath {}",
+        "Start-Process -FilePath {} -ArgumentList '--tray'",
         ps_quote(&exe.display().to_string())
     ))
 }
