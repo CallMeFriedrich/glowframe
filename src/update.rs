@@ -302,6 +302,8 @@ mod tests {
         assert_eq!(parse_version("1.2"), None);
         assert_eq!(parse_version("1.2.3.4"), None);
         assert_eq!(parse_version("x"), None);
+        // Numeric, not textual: 0.1.10 is newer than 0.1.9.
+        assert!(parse_version("v0.1.10") > parse_version("v0.1.9"));
         assert!((0, 1, 10) > (0, 1, 9));
         assert!(current_version() >= (0, 1, 5));
     }
